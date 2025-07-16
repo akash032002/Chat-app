@@ -1,20 +1,17 @@
-# Use a more comprehensive Node.js base image (not Alpine for now, to avoid npm path issues)
+# Start from an official Node.js image (includes both node and npm)
 FROM node:18
 
-# Set the working directory in the container
+# Set working directory inside the container
 WORKDIR /app
 
-# Copy package.json and package-lock.json from the build context (which is 'backend')
-COPY package*.json ./
+# Copy only the backend directory from your project
+COPY ./backend ./backend
 
-# Install Node.js dependencies
-RUN npm install
+# Install backend dependencies
+RUN npm install --prefix backend
 
-# Copy the rest of the backend application code from the build context
-COPY . .
-
-# Expose the port your app runs on
+# Expose backend port (change it to match your app, e.g. 5000 or 3000)
 EXPOSE 3001
 
-# Define the command to run your app
-CMD ["node", "server.js"]
+# Start the backend server
+CMD ["node", "backend/server.js"]
