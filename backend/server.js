@@ -41,7 +41,6 @@ const storage = multer.diskStorage({
 });
 const upload = multer({ storage: storage });
 
-// MySQL Connection Pool
 const pool = mysql.createPool({
     host: process.env.DB_HOST,
     user: process.env.DB_USER,
@@ -49,8 +48,29 @@ const pool = mysql.createPool({
     database: process.env.DB_DATABASE,
     waitForConnections: true,
     connectionLimit: 10,
-    queueLimit: 0
+    queueLimit: 0,
+    // --- ADD THIS SSL CONFIGURATION ---
+    ssl: {
+        rejectUnauthorized: false // Set to false for now to debug.
+                                  // AWS RDS uses valid certificates, but 'false' helps bypass
+                                  // potential issues with certificate authority chains in deployment environments.
+                                  // You can try 'true' later if it connects successfully with 'false'.
+    }
 });
+
+// Important: Add error handling for the connection pool
+pool.getConnection((err, connection) => {
+    if (err) {
+        console.error('Error connecting to MySQL database from pool:', err);
+        // You might want to exit the process or handle this more gracefully in a real app
+    } else {
+        console.log('Successfully connected to MySQL database via pool!');
+        connection.release(); // Release the connection back to the pool
+    }
+});
+
+// Make sure your routes/logic use pool.query() or pool.getConnection()
+// instead of direct connection.query()
 
 // Nodemailer Transporter (for sending emails)
 const transporter = nodemailer.createTransport({
