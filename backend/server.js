@@ -5,6 +5,7 @@ const mysql = require('mysql2/promise'); // Using mysql2 for promise-based opera
 const cors = require('cors');
 const http = require('http');
 const { Server } = require('socket.io');
+const http = require('http');
 const multer = require('multer'); // For handling file uploads
 const path = require('path');
 const fs = require('fs'); // For file system operations
@@ -14,7 +15,7 @@ const app = express();
 const server = http.createServer(app);
 const io = new Server(server, {
     cors: {
-        origin: "*", // Allow all origins for development. In production, specify your frontend URL.
+        origin: "process.env.CORS_ORIGIN", // Allow all origins for development. In production, specify your frontend URL.
         methods: ["GET", "POST"]
     }
 });
