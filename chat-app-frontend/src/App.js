@@ -5,7 +5,7 @@ import io from 'socket.io-client';
 const API_BASE_URL = 'https://chat-backend-api-rhu4.onrender.com'; // Ensure this matches your backend port
 //const SOCKET_URL = 'http://localhost:3001';
 const BACKEND_URL = 'https://chat-backend-api-rhu4.onrender.com';
-const socket = io(const BACKEND_URL);
+const socket = io(BACKEND_URL);
 
 // Add some basic error logging for the socket connection (optional, but helpful)
 socket.on('connect_error', (err) => {
