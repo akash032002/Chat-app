@@ -1,17 +1,19 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import io from 'socket.io-client';
 
-// Backend URL & Socket URL configuration
-// IMPORTANT: For Render deployment, you MUST set these as environment variables in Render's dashboard.
-// REACT_APP_BACKEND_API_URL = https://chat-backend-api-rhu4.onrender.com/api
-// REACT_APP_BACKEND_SOCKET_URL = https://chat-backend-api-rhu4.onrender.com
-// For local development, create a .env file in your chat-app-frontend directory with these:
-// REACT_APP_BACKEND_API_URL=http://localhost:3001/api
-// REACT_APP_BACKEND_SOCKET_URL=http://localhost:3001
-const API_BASE_URL = process.env.REACT_APP_BACKEND_API_URL || 'https://chat-backend-api-rhu4.onrender.com/api';
-const SOCKET_URL = process.env.REACT_APP_BACKEND_SOCKET_URL || 'https://chat-backend-api-rhu4.onrender.com';
+// Backend URL
+const API_BASE_URL = 'https://chat-backend-api-rhu4.onrender.com'; // Ensure this matches your backend port
+//const SOCKET_URL = 'http://localhost:3001';
+const BACKEND_URL = 'https://chat-backend-api-rhu4.onrender.com';
+const socket = io(const BACKEND_URL);
 
+// Add some basic error logging for the socket connection (optional, but helpful)
+socket.on('connect_error', (err) => {
+  console.error(`Socket.IO connection error: ${err.message}`);
+});
+socket.on('connect', () => {
+  console.log('Socket.IO connected to backend!');
+});
 
 // Dark Mode Toggle Components
 function DarkModeToggle({ isDarkMode, toggleDarkMode }) {
@@ -36,21 +38,10 @@ function DarkModeToggle({ isDarkMode, toggleDarkMode }) {
 }
 
 // Viva Questions Page Component
-function VivaQuestionsPage({ loggedInUserId, userName, isAdmin, isVivaQuestionsAddEnabled, isDarkMode, onGoToChat, adminUserName }) {
+function VivaQuestionsPage({ loggedInUserId, userName, isAdmin, isVivaQuestionsAddEnabled, isDarkMode, onGoToChat, adminUserName }) { // Removed isSocketConnected prop
   const [questions, setQuestions] = useState([]);
   const [newQuestion, setNewQuestion] = useState('');
   const questionsEndRef = useRef(null);
-
-  // Access the socket instance from the global scope (initialized in App)
-  // This is how your original code was structured.
-  const socket = useRef(null);
-  useEffect(() => {
-    // Ensure socket is initialized and assigned to ref
-    if (window.globalSocketInstance) {
-      socket.current = window.globalSocketInstance;
-    }
-  }, []);
-
 
   const fetchQuestions = useCallback(async () => {
     try {
@@ -69,37 +60,33 @@ function VivaQuestionsPage({ loggedInUserId, userName, isAdmin, isVivaQuestionsA
   useEffect(() => {
     fetchQuestions();
 
-    if (socket.current) {
-      socket.current.on('newVivaQuestion', (question) => {
-        console.log('Socket.IO: Received newVivaQuestion', question);
-        setQuestions((prevQuestions) => [...prevQuestions, {
-          ...question,
-          timestamp: new Date(question.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-        }]);
-      });
+    // Debugging logs for Socket.IO events in VivaQuestionsPage
+    socket.on('newVivaQuestion', (question) => {
+      console.log('Socket.IO: Received newVivaQuestion', question);
+      setQuestions((prevQuestions) => [...prevQuestions, {
+        ...question,
+        timestamp: new Date(question.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      }]);
+    });
 
-      socket.current.on('vivaQuestionDeleted', (questionId) => {
-        console.log('Socket.IO: Received vivaQuestionDeleted. ID from socket:', questionId, 'Type:', typeof questionId);
-        setQuestions((prevQuestions) =>
-          prevQuestions.map((q) => {
-            console.log(`Comparing q.id (${q.id}, Type: ${typeof q.id}) with questionId (${questionId}, Type: ${typeof questionId})`);
-            // Ensure comparison is robust, e.g., convert to number if questionId might be string
-            if (Number(q.id) === Number(questionId)) {
-              console.log('Match found! Updating question:', q.id);
-              return { ...q, isDeleted: true, questionText: '[This question was deleted by an admin]' };
-            }
-            return q;
-          })
-        );
-      });
-    }
-
+    socket.on('vivaQuestionDeleted', (questionId) => {
+      console.log('Socket.IO: Received vivaQuestionDeleted. ID from socket:', questionId, 'Type:', typeof questionId);
+      setQuestions((prevQuestions) =>
+        prevQuestions.map((q) => {
+          console.log(`Comparing q.id (${q.id}, Type: ${typeof q.id}) with questionId (${questionId}, Type: ${typeof questionId})`);
+          // Ensure comparison is robust, e.g., convert to number if questionId might be string
+          if (Number(q.id) === Number(questionId)) {
+            console.log('Match found! Updating question:', q.id);
+            return { ...q, isDeleted: true, questionText: '[This question was deleted by an admin]' };
+          }
+          return q;
+        })
+      );
+    });
 
     return () => {
-      if (socket.current) {
-        socket.current.off('newVivaQuestion');
-        socket.current.off('vivaQuestionDeleted');
-      }
+      socket.off('newVivaQuestion');
+      socket.off('vivaQuestionDeleted');
     };
   }, [fetchQuestions]);
 
@@ -178,6 +165,8 @@ function VivaQuestionsPage({ loggedInUserId, userName, isAdmin, isVivaQuestionsA
           Logged in as: <span className={`font-semibold ${isDarkMode ? 'text-blue-400' : 'text-blue-600'}`}>{userName || 'User'}</span>
           {isAdmin && <span className="ml-2 px-2 py-1 bg-red-400 text-white text-xs rounded-full">ADMIN</span>}
         </p>
+
+        {/* Removed: Visual Indicator for Socket.IO Connection Status */}
 
         {/* Visual Indicator for Viva Questions Add Status */}
         <div className={`mb-4 p-2 text-sm text-center rounded-lg shadow-md
@@ -523,21 +512,13 @@ function AdminDashboard({ loggedInUserId, userName, allUsers, onRemoveMember, on
 }
 
 // New component for the group chat view
-function GroupChat({ loggedInUserId, userName, isAdmin, onGoToAdminDashboard, groupMembers, isChatEnabled, onLogout, onGoToVivaQuestions, isDarkMode, adminUserName }) {
+function GroupChat({ loggedInUserId, userName, isAdmin, onGoToAdminDashboard, groupMembers, isChatEnabled, onLogout, onGoToVivaQuestions, isDarkMode, adminUserName }) { // Removed isSocketConnected prop
   const [messages, setMessages] = useState([]);
   const [newMessage, setNewMessage] = useState('');
   const [selectedFile, setSelectedFile] = useState(null);
   const [showMembersModal, setShowMembersModal] = useState(false);
   const messagesEndRef = useRef(null);
   const fileInputRef = useRef(null);
-
-  // Access the socket instance from the global scope (initialized in App)
-  const socket = useRef(null);
-  useEffect(() => {
-    if (window.globalSocketInstance) {
-      socket.current = window.globalSocketInstance;
-    }
-  }, []);
 
   const fetchMessages = useCallback(async () => {
     try {
@@ -571,46 +552,43 @@ function GroupChat({ loggedInUserId, userName, isAdmin, onGoToAdminDashboard, gr
     fetchMessages();
     fetchSettings(); // Fetch settings on mount
 
-    if (socket.current) {
-      socket.current.on('newMessage', (message) => {
-        console.log('Socket.IO: Received newMessage', message);
-        setMessages((prevMessages) => [...prevMessages, {
-          ...message,
-          timestamp: new Date(message.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-          fileUrl: message.fileUrl ? `${SOCKET_URL}${message.fileUrl}` : null
-        }]);
-      });
+    // Debugging logs for Socket.IO events in GroupChat
+    socket.on('newMessage', (message) => {
+      console.log('Socket.IO: Received newMessage', message);
+      setMessages((prevMessages) => [...prevMessages, {
+        ...message,
+        timestamp: new Date(message.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        fileUrl: message.fileUrl ? `${SOCKET_URL}${message.fileUrl}` : null
+      }]);
+    });
 
-      socket.current.on('messageDeleted', (messageId) => {
-        console.log('Socket.IO: Received messageDeleted. ID from socket:', messageId, 'Type:', typeof messageId);
-        setMessages((prevMessages) =>
-          prevMessages.map((msg) => {
-            console.log(`Comparing msg.id (${msg.id}, Type: ${typeof msg.id}) with messageId (${messageId}, Type: ${typeof messageId})`);
-            // Ensure comparison is robust, e.g., convert to number if messageId might be string
-            if (Number(msg.id) === Number(messageId)) {
-              console.log('Match found! Updating message:', msg.id);
-              return { ...msg, isDeleted: true, text: '[This message was deleted by an admin]' };
-            }
-            return msg;
-          })
-        );
-      });
+    socket.on('messageDeleted', (messageId) => {
+      console.log('Socket.IO: Received messageDeleted. ID from socket:', messageId, 'Type:', typeof messageId);
+      setMessages((prevMessages) =>
+        prevMessages.map((msg) => {
+          console.log(`Comparing msg.id (${msg.id}, Type: ${typeof msg.id}) with messageId (${messageId}, Type: ${typeof messageId})`);
+          // Ensure comparison is robust, e.g., convert to number if messageId might be string
+          if (Number(msg.id) === Number(messageId)) {
+            console.log('Match found! Updating message:', msg.id);
+            return { ...msg, isDeleted: true, text: '[This message was deleted by an admin]' };
+          }
+          return msg;
+        })
+      );
+    });
 
-      // Listen for setting updates (e.g., chat enabled/disabled)
-      socket.current.on('settingUpdated', ({ settingName, settingValue }) => {
-          console.log(`Socket.IO: Received settingUpdated: ${settingName} = ${settingValue}`);
-          // This component doesn't directly update isChatEnabled, App component does.
-          // But if you had a local state for it, you'd update it here.
-      });
-    }
+    // Listen for setting updates (e.g., chat enabled/disabled)
+    socket.on('settingUpdated', ({ settingName, settingValue }) => {
+        console.log(`Socket.IO: Received settingUpdated: ${settingName} = ${settingValue}`);
+        // This component doesn't directly update isChatEnabled, App component does.
+        // But if you had a local state for it, you'd update it here.
+    });
 
 
     return () => {
-      if (socket.current) {
-        socket.current.off('newMessage');
-        socket.current.off('messageDeleted');
-        socket.current.off('settingUpdated');
-      }
+      socket.off('newMessage');
+      socket.off('messageDeleted');
+      socket.off('settingUpdated');
     };
   }, [fetchMessages, fetchSettings]);
 
@@ -733,6 +711,8 @@ function GroupChat({ loggedInUserId, userName, isAdmin, onGoToAdminDashboard, gr
           Logged in as: <span className={`font-semibold ${isDarkMode ? 'text-blue-400' : 'text-blue-600'}`}>{userName || 'User'}</span>
           {isAdmin && <span className="ml-2 px-2 py-1 bg-red-400 text-white text-xs rounded-full">ADMIN</span>}
         </p>
+
+        {/* Removed: Visual Indicator for Socket.IO Connection Status */}
 
         {/* Visual Indicator for Chat Status */}
         <div className={`mb-4 p-2 text-sm text-center rounded-lg shadow-md
@@ -909,7 +889,7 @@ function App() {
   const [isChatEnabled, setIsChatEnabled] = useState(true);
   const [isVivaQuestionsAddEnabled, setIsVivaQuestionsAddEnabled] = useState(true);
   const [isDarkMode, setIsDarkMode] = useState(false);
-  // Removed isSocketConnected state as it was not used for UI logic in the provided code
+  const [isSocketConnected, setIsSocketConnected] = useState(socket.connected); // Track socket connection
   const adminUserName = 'Admin Akash'; // Define admin user name for consistent highlighting - UPDATED TO 'Admin Akash'
 
   // OTP related states
@@ -926,78 +906,6 @@ function App() {
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [message, setMessage] = useState('');
-
-  // Use useRef to hold the socket instance, initialized once
-  const socketRef = useRef(null);
-
-  useEffect(() => {
-    // Initialize socket connection only once when component mounts
-    if (!socketRef.current) {
-      socketRef.current = io(SOCKET_URL, {
-        transports: ['websocket'],
-        reconnectionAttempts: 5,
-        reconnectionDelay: 1000,
-      });
-      // Make socket instance globally accessible for nested components
-      window.globalSocketInstance = socketRef.current;
-
-      socketRef.current.on('connect', () => {
-        console.log('Socket.IO: Connected to server!');
-      });
-
-      socketRef.current.on('disconnect', () => {
-        console.log('Socket.IO: Disconnected from server.');
-      });
-
-      socketRef.current.on('connect_error', (err) => {
-        console.error('Socket.IO: Connection Error:', err.message);
-      });
-    }
-
-    // Global listeners for settings and user updates (from admin dashboard)
-    if (socketRef.current) {
-      socketRef.current.on('userApproved', (userId) => {
-        console.log('Socket.IO: Received userApproved', userId);
-        setAllUsers(prevUsers => prevUsers.map(u => u.id === userId ? { ...u, isApproved: true } : u));
-      });
-
-      socketRef.current.on('userRemoved', (userId) => {
-        console.log('Socket.IO: Received userRemoved', userId);
-        setAllUsers(prevUsers => prevUsers.filter(u => u.id !== userId));
-      });
-
-      socketRef.current.on('settingUpdated', ({ settingName, settingValue }) => {
-        console.log(`App Component: Socket.IO: Received settingUpdated: ${settingName} = ${settingValue}`);
-        if (settingName === 'isChatEnabled') {
-          setIsChatEnabled(settingValue);
-          console.log(`App Component: isChatEnabled updated to: ${settingValue}`);
-          setMessage(`Chat is now ${settingValue ? 'ENABLED' : 'DISABLED'} by admin.`);
-        } else if (settingName === 'isVivaQuestionsAddEnabled') {
-          setIsVivaQuestionsAddEnabled(settingValue);
-          console.log(`App Component: isVivaQuestionsAddEnabled updated to: ${settingValue}`);
-          setMessage(`Viva Q&A Add is now ${settingValue ? 'ENABLED' : 'DISABLED'} by admin.`);
-        }
-        setTimeout(() => setMessage(''), 2000);
-      });
-    }
-
-
-    return () => {
-      // Clean up on component unmount
-      if (socketRef.current) {
-        socketRef.current.off('connect');
-        socketRef.current.off('disconnect');
-        socketRef.current.off('connect_error');
-        socketRef.current.off('userApproved');
-        socketRef.current.off('userRemoved');
-        socketRef.current.off('settingUpdated');
-        // Do NOT disconnect here if you want the socket to persist for the app's lifetime
-        // unless the App component itself unmounts (e.g., full page refresh).
-        // If you want to disconnect on logout, handle it in handleLogout.
-      }
-    };
-  }, [SOCKET_URL]);
-
 
   // Fetch initial settings and users on app load
   const fetchInitialData = useCallback(async () => {
@@ -1018,6 +926,57 @@ function App() {
 
   useEffect(() => {
     fetchInitialData();
+
+    // Debugging logs for Socket.IO events in App component
+    socket.on('userApproved', (userId) => {
+      console.log('Socket.IO: Received userApproved', userId);
+      setAllUsers(prevUsers => prevUsers.map(u => u.id === userId ? { ...u, isApproved: true } : u));
+    });
+
+    socket.on('userRemoved', (userId) => {
+      console.log('Socket.IO: Received userRemoved', userId);
+      setAllUsers(prevUsers => prevUsers.filter(u => u.id !== userId));
+    });
+
+    socket.on('settingUpdated', ({ settingName, settingValue }) => {
+      console.log(`App Component: Socket.IO: Received settingUpdated: ${settingName} = ${settingValue}`);
+      if (settingName === 'isChatEnabled') {
+        setIsChatEnabled(settingValue);
+        console.log(`App Component: isChatEnabled updated to: ${settingValue}`); // Added log
+        setMessage(`Chat is now ${settingValue ? 'ENABLED' : 'DISABLED'} by admin.`);
+      } else if (settingName === 'isVivaQuestionsAddEnabled') {
+        setIsVivaQuestionsAddEnabled(settingValue);
+        console.log(`App Component: isVivaQuestionsAddEnabled updated to: ${settingValue}`); // Added log
+        setMessage(`Viva Q&A Add is now ${settingValue ? 'ENABLED' : 'DISABLED'} by admin.`);
+      }
+      setTimeout(() => setMessage(''), 2000);
+    });
+
+    // Socket.IO connection status listeners
+    socket.on('connect', () => {
+      console.log('Socket.IO: Connected to server!');
+      setIsSocketConnected(true);
+    });
+
+    socket.on('disconnect', () => {
+      console.log('Socket.IO: Disconnected from server.');
+      setIsSocketConnected(false);
+    });
+
+    socket.on('connect_error', (err) => {
+      console.error('Socket.IO: Connection Error:', err.message);
+      setIsSocketConnected(false);
+    });
+
+
+    return () => {
+      socket.off('userApproved');
+      socket.off('userRemoved');
+      socket.off('settingUpdated');
+      socket.off('connect');
+      socket.off('disconnect');
+      socket.off('connect_error');
+    };
   }, [fetchInitialData]);
 
 
@@ -1220,12 +1179,6 @@ function App() {
     setEnteredOtp('');
     setTempNewUserEmail('');
     setTempNewUserId('');
-    // Disconnect socket on logout
-    if (socketRef.current) {
-      socketRef.current.disconnect();
-      socketRef.current = null; // Clear the ref so it can be re-initialized on next login
-      window.globalSocketInstance = null; // Clear global instance too
-    }
   };
 
   // Conditional rendering based on currentView state
@@ -1243,6 +1196,7 @@ function App() {
         onGoToVivaQuestions={() => setCurrentView('vivaQuestions')}
         isDarkMode={isDarkMode}
         adminUserName={adminUserName}
+        // isSocketConnected={isSocketConnected} // Removed prop
       />
     );
   } else if (currentView === 'admin') {
@@ -1273,6 +1227,7 @@ function App() {
         isVivaQuestionsAddEnabled={isVivaQuestionsAddEnabled} // Pass the state to VivaQuestionsPage
         isDarkMode={isDarkMode}
         adminUserName={adminUserName}
+        // isSocketConnected={isSocketConnected} // Removed prop
       />
     );
   } else if (currentView === 'otpVerification') {
