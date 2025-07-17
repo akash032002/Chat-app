@@ -218,20 +218,22 @@ app.post('/api/verify-otp', async (req, res) => {
 // 3. User Login
 app.post('/api/login', async (req, res) => {
     const { email, password } = req.body;
+    console.log("Login attempt:", email); // 👈 Add this
 
     try {
         const [users] = await pool.execute('SELECT id, name, password, isAdmin, isApproved, isEmailVerified FROM users WHERE email = ?', [email]);
         const user = users[0];
 
-        if (!user || user.password !== password) { // In real app, use bcrypt.compare
+        if (!user || user.password !== password) {
+            console.log("Invalid credentials"); // 👈 Add this
             return res.status(401).json({ message: 'Invalid email or password.' });
         }
-        // Ensure user is email verified AND approved before allowing login to chat
+
         if (!user.isEmailVerified) {
-            return res.status(403).json({ message: 'Account not email verified. Please verify your email with the OTP.' });
+            return res.status(403).json({ message: 'Account not email verified.' });
         }
         if (!user.isApproved) {
-            return res.status(403).json({ message: 'Account not approved by admin. Please await admin approval.' });
+            return res.status(403).json({ message: 'Account not approved.' });
         }
 
         res.status(200).json({
@@ -241,11 +243,11 @@ app.post('/api/login', async (req, res) => {
                 name: user.name,
                 isAdmin: user.isAdmin,
                 isApproved: user.isApproved,
-                isEmailVerified: user.isEmailVerified // Include new field
+                isEmailVerified: user.isEmailVerified
             }
         });
     } catch (error) {
-        console.error('Error during login:', error);
+        console.error('🔥 Error during login:', error); // 👈 This will appear in logs
         res.status(500).json({ message: 'Server error during login.' });
     }
 });
