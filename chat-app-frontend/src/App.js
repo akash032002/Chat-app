@@ -6,7 +6,7 @@ const API_BASE_URL = 'https://chat-backend-api-rhu4.onrender.com'; // Ensure thi
 //const SOCKET_URL = 'http://localhost:3001';
 const BACKEND_URL = 'https://chat-backend-api-rhu4.onrender.com';
 const socket = io(BACKEND_URL);
-
+const SOCKET_URL = 'https://chat-backend-api-rhu4.onrender.com';
 // Add some basic error logging for the socket connection (optional, but helpful)
 socket.on('connect_error', (err) => {
   console.error(`Socket.IO connection error: ${err.message}`);
