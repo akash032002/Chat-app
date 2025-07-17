@@ -3,7 +3,7 @@ require('dotenv').config(); // Load environment variables from .env file
 const express = require('express');
 const mysql = require('mysql2/promise'); // Using mysql2 for promise-based operations
 const cors = require('cors');
-const http = require('http');
+//const http = require('http');
 const { Server } = require('socket.io');
 const http = require('http');
 const multer = require('multer'); // For handling file uploads
