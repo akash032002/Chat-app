@@ -1,41 +1,904 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
-import io from 'socket.io-client'; // Import socket.io-client
+import io from 'socket.io-client';
 
+// Backend URL
+const API_BASE_URL = 'https://chat-backend-api-rhu4.onrender.com'; // Ensure this matches your backend port
+//const SOCKET_URL = 'http://localhost:3001';
+const BACKEND_URL = 'https://chat-backend-api-rhu4.onrender.com';
+const socket = io(const BACKEND_URL);
+
+// Add some basic error logging for the socket connection (optional, but helpful)
+socket.on('connect_error', (err) => {
+  console.error(`Socket.IO connection error: ${err.message}`);
+});
+socket.on('connect', () => {
+  console.log('Socket.IO connected to backend!');
+});
+
+// Dark Mode Toggle Components
+function DarkModeToggle({ isDarkMode, toggleDarkMode }) {
+  return (
+    <button
+      onClick={toggleDarkMode}
+      className={`p-2 rounded-full shadow-md transition duration-300 ease-in-out transform hover:scale-105
+        ${isDarkMode ? 'bg-gray-700 hover:bg-gray-600 text-yellow-300' : 'bg-gray-200 hover:bg-gray-300 text-gray-700'}`}
+      title={isDarkMode ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
+    >
+      {isDarkMode ? (
+        <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+          <path strokeLinecap="round" strokeLinejoin="round" d="M12 3v1m0 16v1m9-9h1M3 12H2m8.003-7.53l.707-.707A1 1 0 0112 4v0a1 1 0 011.707.707l.707.707M4.003 12.003l-.707.707A1 1 0 013 13v0a1 1 0 01-.707-.707l-.707-.707m18-18l-.707.707A1 1 0 0120 4v0a1 1 0 01-.707-.707l-.707-.707m-18 18l.707-.707A1 1 0 014 20v0a1 1 0 01.707.707l.707.707M12 6a6 6 0 110 12 6 6 0 010-12z" />
+        </svg>
+      ) : (
+        <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+          <path strokeLinecap="round" strokeLinejoin="round" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" />
+        </svg>
+      )}
+    </button>
+  );
+}
+
+// Viva Questions Page Component
+function VivaQuestionsPage({ loggedInUserId, userName, isAdmin, isVivaQuestionsAddEnabled, isDarkMode, onGoToChat, adminUserName }) { // Removed isSocketConnected prop
+  const [questions, setQuestions] = useState([]);
+  const [newQuestion, setNewQuestion] = useState('');
+  const questionsEndRef = useRef(null);
+
+  const fetchQuestions = useCallback(async () => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/viva-questions`);
+      const data = await response.json();
+      setQuestions(data.map(q => ({
+        ...q,
+        // Convert timestamp from SQL string to Date object if needed for formatting
+        timestamp: new Date(q.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      })));
+    } catch (error) {
+      console.error('Error fetching viva questions:', error);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchQuestions();
+
+    // Debugging logs for Socket.IO events in VivaQuestionsPage
+    socket.on('newVivaQuestion', (question) => {
+      console.log('Socket.IO: Received newVivaQuestion', question);
+      setQuestions((prevQuestions) => [...prevQuestions, {
+        ...question,
+        timestamp: new Date(question.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      }]);
+    });
+
+    socket.on('vivaQuestionDeleted', (questionId) => {
+      console.log('Socket.IO: Received vivaQuestionDeleted. ID from socket:', questionId, 'Type:', typeof questionId);
+      setQuestions((prevQuestions) =>
+        prevQuestions.map((q) => {
+          console.log(`Comparing q.id (${q.id}, Type: ${typeof q.id}) with questionId (${questionId}, Type: ${typeof questionId})`);
+          // Ensure comparison is robust, e.g., convert to number if questionId might be string
+          if (Number(q.id) === Number(questionId)) {
+            console.log('Match found! Updating question:', q.id);
+            return { ...q, isDeleted: true, questionText: '[This question was deleted by an admin]' };
+          }
+          return q;
+        })
+      );
+    });
+
+    return () => {
+      socket.off('newVivaQuestion');
+      socket.off('vivaQuestionDeleted');
+    };
+  }, [fetchQuestions]);
+
+  // Add this useEffect to log prop changes
+  useEffect(() => {
+    console.log('VivaQuestionsPage: isVivaQuestionsAddEnabled prop changed to:', isVivaQuestionsAddEnabled);
+  }, [isVivaQuestionsAddEnabled]);
+
+
+  useEffect(() => {
+    questionsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [questions]);
+
+  const handleAddQuestion = async (e) => {
+    e.preventDefault();
+    if (!isVivaQuestionsAddEnabled) {
+      console.log('Adding viva questions is currently disabled by admin.');
+      return;
+    }
+    if (newQuestion.trim() === '') {
+      return;
+    }
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/viva-questions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          senderId: loggedInUserId,
+          senderName: userName,
+          questionText: newQuestion
+        })
+      });
+      if (response.ok) {
+        setNewQuestion('');
+      } else {
+        console.error('Failed to add question:', await response.json());
+      }
+    } catch (error) {
+      console.error('Error adding question:', error);
+    }
+  };
+
+  const handleDeleteQuestion = async (id) => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/viva-questions/${id}/delete`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      if (!response.ok) {
+        console.error('Failed to delete question:', await response.json());
+      }
+    } catch (error) {
+      console.error('Error deleting question:', error);
+    }
+  };
+
+  return (
+    <div className={`min-h-screen flex items-center justify-center p-4 font-sans
+      ${isDarkMode ? 'bg-gradient-to-br from-gray-900 to-blue-950' : 'bg-gradient-to-br from-sky-100 to-blue-200'}`}>
+      <div className={`p-6 rounded-xl shadow-lg w-full max-w-2xl flex flex-col h-[90vh] transform transition-all duration-300 hover:scale-105
+        ${isDarkMode ? 'bg-gray-800 text-gray-100' : 'bg-white'}`}>
+        <div className="flex justify-between items-center mb-4">
+          <h2 className={`text-3xl font-extrabold text-center flex-grow ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>
+            Viva Questions
+          </h2>
+          <button
+            onClick={onGoToChat}
+            className={`font-bold py-2 px-4 rounded-xl shadow-md transition duration-300 ease-in-out transform hover:scale-105 text-sm
+              ${isDarkMode ? 'bg-blue-700 hover:bg-blue-800 text-white' : 'bg-blue-500 hover:bg-blue-600 text-white'}`}
+          >
+            Go to Chat
+          </button>
+        </div>
+        <p className={`text-md mb-4 text-center ${isDarkMode ? 'text-gray-300' : 'text-gray-700'}`}>
+          Logged in as: <span className={`font-semibold ${isDarkMode ? 'text-blue-400' : 'text-blue-600'}`}>{userName || 'User'}</span>
+          {isAdmin && <span className="ml-2 px-2 py-1 bg-red-400 text-white text-xs rounded-full">ADMIN</span>}
+        </p>
+
+        {/* Removed: Visual Indicator for Socket.IO Connection Status */}
+
+        {/* Visual Indicator for Viva Questions Add Status */}
+        <div className={`mb-4 p-2 text-sm text-center rounded-lg shadow-md
+          ${isVivaQuestionsAddEnabled ? 'bg-green-500 text-white' : 'bg-red-500 text-white'}`}>
+          Viva Questions Add Status: {isVivaQuestionsAddEnabled ? 'ENABLED' : 'DISABLED'}
+        </div>
+
+        {!isVivaQuestionsAddEnabled && (
+          <div className="mb-4 p-3 text-sm text-center text-white bg-red-400 rounded-lg shadow-md">
+            Adding new viva questions is currently disabled by the admin.
+          </div>
+        )}
+
+        <div className={`flex-1 overflow-y-auto p-4 border rounded-lg mb-4
+          ${isDarkMode ? 'bg-gray-700 border-gray-600' : 'bg-gray-50 border-gray-200'}`}>
+          {questions.map((q) => (
+            <div
+              key={q.id}
+              className={`flex mb-3 ${q.senderName === userName ? 'justify-end' : 'justify-start'}`}
+            >
+              <div
+                className={`max-w-[80%] p-3 rounded-xl shadow-sm relative
+                  ${q.senderName === userName
+                    ? (isDarkMode ? 'bg-sky-700 text-white' : 'bg-sky-300 text-gray-900') + ' rounded-br-none'
+                    : (isDarkMode ? 'bg-gray-600 text-gray-100' : 'bg-gray-100 text-gray-800') + ' rounded-bl-none'
+                  } ${q.isDeleted ? 'opacity-60 italic' : ''}`}
+              >
+                <div className={`font-bold text-sm mb-1 ${q.senderName === adminUserName ? (isDarkMode ? 'text-purple-300' : 'text-purple-700') : ''}`}>
+                  {q.senderName === userName ? 'You' : q.senderName}
+                </div>
+                <p className="text-sm break-words">{q.questionText}</p>
+                <div className={`text-xs mt-1 opacity-75 text-right ${isDarkMode ? 'text-gray-300' : ''}`}>
+                  {q.timestamp}
+                </div>
+                {isAdmin && !q.isDeleted && (
+                  <button
+                    onClick={() => handleDeleteQuestion(q.id)}
+                    className="absolute top-1 right-1 bg-red-300 hover:bg-red-500 text-white rounded-full p-1 text-xs leading-none"
+                    title="Delete Question"
+                  >
+                    &times;
+                  </button>
+                )}
+              </div>
+            </div>
+          ))}
+          <div ref={questionsEndRef} />
+        </div>
+
+        <form onSubmit={handleAddQuestion} className="flex gap-2 items-center">
+          <input
+            type="text"
+            className={`flex-1 px-4 py-2 border rounded-xl shadow-sm focus:outline-none sm:text-sm
+              ${isVivaQuestionsAddEnabled
+                ? (isDarkMode ? 'border-gray-600 bg-gray-700 text-gray-100 focus:ring-sky-500 focus:border-sky-500' : 'border-gray-300 focus:ring-sky-500 focus:border-sky-500')
+                : 'border-gray-400 bg-gray-100 cursor-not-allowed'
+              }`}
+            placeholder={isVivaQuestionsAddEnabled ? "Add a new viva question..." : "Adding questions is disabled by admin."}
+            value={newQuestion}
+            onChange={(e) => setNewQuestion(e.target.value)}
+            // Ensure disabled state is directly tied to the prop
+            disabled={!isVivaQuestionsAddEnabled}
+          />
+          <button
+            type="submit"
+            className={`font-bold py-2 px-4 rounded-xl shadow-md transition duration-300 ease-in-out transform hover:scale-105
+              ${isVivaQuestionsAddEnabled
+                ? (isDarkMode ? 'bg-sky-700 hover:bg-sky-800 text-white' : 'bg-sky-500 hover:bg-sky-600 text-white')
+                : 'bg-gray-400 text-gray-200 cursor-not-allowed'
+              }`}
+            // Ensure disabled state is directly tied to the prop
+            disabled={!isVivaQuestionsAddEnabled}
+          >
+            Add Question
+          </button>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+
+// Admin Dashboard Component
+function AdminDashboard({ loggedInUserId, userName, allUsers, onRemoveMember, onApproveMember, onGoToChat, isChatEnabled, onToggleChat, onLogout, isVivaQuestionsAddEnabled, onToggleVivaQuestionsAdd, isDarkMode, adminUserName }) {
+  const [message, setMessage] = useState('');
+
+  const approvedMembers = allUsers.filter(member => member.isApproved && !member.isAdmin);
+  // MODIFIED: Only show pending members who are email verified AND not yet approved by admin
+  const pendingMembers = allUsers.filter(member => member.isEmailVerified && !member.isApproved && !member.isAdmin);
+  const adminUser = allUsers.find(member => member.isAdmin);
+
+  const handleRemove = async (memberId, memberName) => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/users/${memberId}`, {
+        method: 'DELETE',
+      });
+      if (response.ok) {
+        setMessage(`Successfully removed ${memberName}.`);
+        onRemoveMember(memberId); // Update local state via prop
+      } else {
+        setMessage(`Failed to remove ${memberName}.`);
+      }
+    } catch (error) {
+      console.error('Error removing member:', error);
+      setMessage('Server error removing member.');
+    } finally {
+      setTimeout(() => setMessage(''), 2000);
+    }
+  };
+
+  const handleApprove = async (memberId, memberName) => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/users/${memberId}/approve`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      if (response.ok) {
+        setMessage(`Successfully approved ${memberName}.`);
+        onApproveMember(memberId); // Update local state via prop
+      } else {
+        setMessage(`Failed to approve ${memberName}.`);
+      }
+    } catch (error) {
+      console.error('Error approving member:', error);
+      setMessage('Server error approving member.');
+    } finally {
+      setTimeout(() => setMessage(''), 2000);
+    }
+  };
+
+  const handleToggleChatSetting = async () => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/settings/isChatEnabled`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ settingValue: !isChatEnabled })
+      });
+      if (response.ok) {
+        onToggleChat(); // Update local state via prop
+        setMessage(`Chat is now ${!isChatEnabled ? 'ENABLED' : 'DISABLED'}.`);
+      } else {
+        setMessage('Failed to toggle chat status.');
+      }
+    } catch (error) {
+      console.error('Error toggling chat setting:', error);
+      setMessage('Server error toggling chat setting.');
+    } finally {
+      setTimeout(() => setMessage(''), 2000);
+    }
+  };
+
+  const handleToggleVivaQuestionsAddSetting = async () => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/settings/isVivaQuestionsAddEnabled`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ settingValue: !isVivaQuestionsAddEnabled })
+      });
+      if (response.ok) {
+        onToggleVivaQuestionsAdd(); // Update local state via prop
+        setMessage(`Viva Q&A Add is now ${!isVivaQuestionsAddEnabled ? 'ENABLED' : 'DISABLED'}.`);
+      } else {
+        setMessage('Failed to toggle Viva Q&A Add status.');
+      }
+    } catch (error) {
+      console.error('Error toggling Viva Q&A Add setting:', error);
+      setMessage('Server error toggling Viva Q&A Add setting.');
+    } finally {
+      setTimeout(() => setMessage(''), 2000);
+    }
+  };
+
+
+  return (
+    <div className={`min-h-screen flex items-center justify-center p-4 font-sans
+      ${isDarkMode ? 'bg-gradient-to-br from-gray-900 to-blue-950' : 'bg-gradient-to-br from-blue-100 to-indigo-200'}`}>
+      <div className={`p-8 rounded-2xl shadow-lg w-full max-w-4xl flex flex-col h-[90vh] transform transition-all duration-300 hover:scale-105
+        ${isDarkMode ? 'bg-gray-800 text-gray-100' : 'bg-white'}`}>
+        <div className="flex justify-between items-center mb-8 pb-4 border-b border-gray-200">
+          <h2 className={`text-4xl font-extrabold ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>Admin Dashboard</h2>
+          <div className="flex space-x-4">
+            <button
+              onClick={onGoToChat}
+              className={`font-bold py-2 px-6 rounded-xl shadow-md transition duration-300 ease-in-out transform hover:scale-105 text-lg flex items-center gap-2
+                ${isDarkMode ? 'bg-blue-700 hover:bg-blue-800 text-white' : 'bg-blue-500 hover:bg-blue-600 text-white'}`}
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+              </svg>
+              Go to Chat
+            </button>
+            <button
+              onClick={onLogout}
+              className={`font-bold py-2 px-6 rounded-xl shadow-md transition duration-300 ease-in-out transform hover:scale-105 text-lg flex items-center gap-2
+                ${isDarkMode ? 'bg-gray-700 hover:bg-gray-800 text-white' : 'bg-gray-500 hover:bg-gray-600 text-white'}`}
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+              </svg>
+              Logout
+            </button>
+          </div>
+        </div>
+
+        {message && (
+          <div className="mb-6 p-4 text-base text-center text-white bg-blue-400 rounded-lg shadow-md animate-fade-in-down">
+            {message}
+          </div>
+        )}
+
+        {/* Admin User Section */}
+        {adminUser && (
+          <div className={`mb-8 p-4 border rounded-lg shadow-sm flex items-center justify-between
+            ${isDarkMode ? 'bg-gray-700 border-gray-600' : 'bg-yellow-100 border-yellow-200'}`}>
+            <h3 className={`text-xl font-semibold ${isDarkMode ? 'text-gray-100' : 'text-gray-800'}`}>Logged in as: <span className={`font-extrabold ${isDarkMode ? 'text-yellow-400' : 'text-yellow-700'}`}>{adminUser.name} (Admin)</span></h3>
+            {/* Chat Enable/Disable Toggle */}
+            <div className="flex items-center gap-4">
+              <span className={`text-lg font-semibold ${isDarkMode ? 'text-gray-100' : 'text-gray-800'}`}>Chat Status:</span>
+              <button
+                onClick={handleToggleChatSetting}
+                className={`flex items-center gap-2 px-4 py-2 rounded-full shadow-md transition duration-300 ease-in-out transform hover:scale-105 ${
+                  isChatEnabled ? 'bg-green-500 hover:bg-green-600 text-white' : 'bg-red-500 hover:bg-red-600 text-white'
+                }`}
+              >
+                {isChatEnabled ? (
+                  <>
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                      <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-11a1 1 0 10-2 0v4a1 1 0 102 0V7zm-1 9a1 1 0 100-2 1 1 0 000 2z" clipRule="evenodd" />
+                    </svg>
+                    Chat ON
+                  </>
+                ) : (
+                  <>
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                      <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
+                    </svg>
+                    Chat OFF
+                  </>
+                )}
+              </button>
+            </div>
+            {/* Viva Questions Add Toggle */}
+            <div className="flex items-center gap-4 ml-4">
+              <span className={`text-lg font-semibold ${isDarkMode ? 'text-gray-100' : 'text-gray-800'}`}>Viva Q&A Add:</span>
+              <button
+                onClick={handleToggleVivaQuestionsAddSetting}
+                className={`flex items-center gap-2 px-4 py-2 rounded-full shadow-md transition duration-300 ease-in-out transform hover:scale-105 ${
+                  isVivaQuestionsAddEnabled ? 'bg-green-500 hover:bg-green-600 text-white' : 'bg-red-500 hover:bg-red-600 text-white'
+                }`}
+              >
+                {isVivaQuestionsAddEnabled ? (
+                  <>
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                      <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-11a1 1 0 10-2 0v4a1 1 0 102 0V7zm-1 9a1 1 0 100-2 1 1 0 000 2z" clipRule="evenodd" />
+                    </svg>
+                    Add ON
+                  </>
+                ) : (
+                  <>
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                      <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
+                    </svg>
+                    Add OFF
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        )}
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-8 flex-1">
+          {/* Pending Approvals Section */}
+          <div className={`p-6 rounded-xl shadow-lg border flex flex-col
+            ${isDarkMode ? 'bg-gray-700 border-gray-600' : 'bg-white border-gray-100'}`}>
+            <h3 className={`text-2xl font-bold mb-4 flex items-center gap-2 ${isDarkMode ? 'text-gray-100' : 'text-gray-800'}`}>
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-7 w-7 text-yellow-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+              </svg>
+              Pending Approvals ({pendingMembers.length})
+            </h3>
+            <div className="flex-1 overflow-y-auto pr-2">
+              <ul className="space-y-3">
+                {pendingMembers.length > 0 ? (
+                  pendingMembers.map((member) => (
+                    <li key={member.id} className={`flex justify-between items-center p-4 rounded-lg shadow-sm border transition duration-200
+                      ${isDarkMode ? 'bg-gray-600 border-gray-500 hover:bg-gray-500' : 'bg-yellow-50 border-yellow-100 hover:bg-yellow-100'}`}>
+                      <span className={`font-medium ${isDarkMode ? 'text-gray-100' : 'text-gray-800'}`}>{member.name} <span className={`text-sm ${isDarkMode ? 'text-gray-300' : 'text-gray-600'}`}>({member.email})</span></span>
+                      <button
+                        onClick={() => handleApprove(member.id, member.name)}
+                        className="bg-green-500 hover:bg-green-600 text-white font-bold py-2 px-4 rounded-lg text-sm transition duration-300 ease-in-out transform hover:scale-105 flex items-center gap-1"
+                      >
+                        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                        </svg>
+                        Approve
+                      </button>
+                    </li>
+                  ))
+                ) : (
+                  <p className={`text-center py-4 ${isDarkMode ? 'text-gray-300' : 'text-gray-600'}`}>No pending approval requests.</p>
+                )}
+              </ul>
+            </div>
+          </div>
+
+          {/* Approved Members Section */}
+          <div className={`p-6 rounded-xl shadow-lg border flex flex-col
+            ${isDarkMode ? 'bg-gray-700 border-gray-600' : 'bg-white border-gray-100'}`}>
+            <h3 className={`text-2xl font-bold mb-4 flex items-center gap-2 ${isDarkMode ? 'text-gray-100' : 'text-gray-800'}`}>
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-7 w-7 text-green-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.653-.146-1.28-.423-1.848M13 16H7m6 0v-2.83A2.83 2.83 0 0115.83 10H17a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v3a2 2 0 002 2h2.17C9.854 11.28 10 11.907 10 12.56V16m-4 0v-2.83A2.83 2.83 0 018.17 10H7a2 2 0 00-2 2v3a2 2 0 002 2h2m-4 0h14" />
+              </svg>
+              Approved Group Members ({approvedMembers.length})
+            </h3>
+            <div className="flex-1 overflow-y-auto pr-2">
+              <ul className="space-y-3">
+                {approvedMembers.length > 0 ? (
+                  approvedMembers.map((member) => (
+                    <li key={member.id} className={`flex justify-between items-center p-4 rounded-lg shadow-sm border transition duration-200
+                      ${isDarkMode ? 'bg-gray-600 border-gray-500 hover:bg-gray-500' : 'bg-gray-50 border-gray-100 hover:bg-gray-100'}`}>
+                      <span className={`font-medium ${isDarkMode ? 'text-gray-100' : 'text-gray-800'}`}>{member.name} <span className={`text-sm ${isDarkMode ? 'text-gray-300' : 'text-gray-600'}`}>({member.email})</span></span>
+                      <button
+                        onClick={() => handleRemove(member.id, member.name)}
+                        className="bg-red-500 hover:bg-red-600 text-white font-bold py-2 px-4 rounded-lg text-sm transition duration-300 ease-in-out transform hover:scale-105 flex items-center gap-1"
+                      >
+                        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                        </svg>
+                        Remove
+                      </button>
+                    </li>
+                  ))
+                ) : (
+                  <p className={`text-center py-4 ${isDarkMode ? 'text-gray-300' : 'text-gray-600'}`}>No other approved members in the group.</p>
+                )}
+              </ul>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// New component for the group chat view
+function GroupChat({ loggedInUserId, userName, isAdmin, onGoToAdminDashboard, groupMembers, isChatEnabled, onLogout, onGoToVivaQuestions, isDarkMode, adminUserName }) { // Removed isSocketConnected prop
+  const [messages, setMessages] = useState([]);
+  const [newMessage, setNewMessage] = useState('');
+  const [selectedFile, setSelectedFile] = useState(null);
+  const [showMembersModal, setShowMembersModal] = useState(false);
+  const messagesEndRef = useRef(null);
+  const fileInputRef = useRef(null);
+
+  const fetchMessages = useCallback(async () => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/messages`);
+      const data = await response.json();
+      setMessages(data.map(msg => ({
+        ...msg,
+        // Convert timestamp from SQL string to Date object for consistent formatting
+        timestamp: new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        // Prepend backend URL to fileUrl if it exists
+        fileUrl: msg.fileUrl ? `${SOCKET_URL}${msg.fileUrl}` : null
+      })));
+    } catch (error) {
+      console.error('Error fetching messages:', error);
+    }
+  }, []);
+
+  const fetchSettings = useCallback(async () => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/settings`);
+      const data = await response.json();
+      // This part is handled by the App component now, but good to have for reference
+      // if this component ever needed to fetch settings directly.
+      // console.log('Fetched settings:', data);
+    } catch (error) {
+      console.error('Error fetching settings:', error);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchMessages();
+    fetchSettings(); // Fetch settings on mount
+
+    // Debugging logs for Socket.IO events in GroupChat
+    socket.on('newMessage', (message) => {
+      console.log('Socket.IO: Received newMessage', message);
+      setMessages((prevMessages) => [...prevMessages, {
+        ...message,
+        timestamp: new Date(message.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        fileUrl: message.fileUrl ? `${SOCKET_URL}${message.fileUrl}` : null
+      }]);
+    });
+
+    socket.on('messageDeleted', (messageId) => {
+      console.log('Socket.IO: Received messageDeleted. ID from socket:', messageId, 'Type:', typeof messageId);
+      setMessages((prevMessages) =>
+        prevMessages.map((msg) => {
+          console.log(`Comparing msg.id (${msg.id}, Type: ${typeof msg.id}) with messageId (${messageId}, Type: ${typeof messageId})`);
+          // Ensure comparison is robust, e.g., convert to number if messageId might be string
+          if (Number(msg.id) === Number(messageId)) {
+            console.log('Match found! Updating message:', msg.id);
+            return { ...msg, isDeleted: true, text: '[This message was deleted by an admin]' };
+          }
+          return msg;
+        })
+      );
+    });
+
+    // Listen for setting updates (e.g., chat enabled/disabled)
+    socket.on('settingUpdated', ({ settingName, settingValue }) => {
+        console.log(`Socket.IO: Received settingUpdated: ${settingName} = ${settingValue}`);
+        // This component doesn't directly update isChatEnabled, App component does.
+        // But if you had a local state for it, you'd update it here.
+    });
+
+
+    return () => {
+      socket.off('newMessage');
+      socket.off('messageDeleted');
+      socket.off('settingUpdated');
+    };
+  }, [fetchMessages, fetchSettings]);
+
+  // Add this useEffect to log prop changes
+  useEffect(() => {
+    console.log('GroupChat: isChatEnabled prop changed to:', isChatEnabled);
+  }, [isChatEnabled]);
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages]);
+
+  const handleSendMessage = async (e) => {
+    e.preventDefault();
+
+    if (!isChatEnabled) {
+      console.log('Chat is currently disabled by admin.');
+      return;
+    }
+
+    if (newMessage.trim() === '' && !selectedFile) {
+      return;
+    }
+
+    const formData = new FormData();
+    formData.append('senderId', loggedInUserId);
+    formData.append('senderName', userName);
+    formData.append('text', newMessage);
+    if (selectedFile) {
+      formData.append('file', selectedFile);
+    }
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/messages`, {
+        method: 'POST',
+        body: formData, // No 'Content-Type' header needed for FormData
+      });
+      if (response.ok) {
+        setNewMessage('');
+        setSelectedFile(null);
+        if (fileInputRef.current) {
+          fileInputRef.current.value = '';
+        }
+      } else {
+        console.error('Failed to send message:', await response.json());
+      }
+    } catch (error) {
+      console.error('Error sending message:', error);
+    }
+  };
+
+  const handleFileChange = (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      setSelectedFile(file);
+    }
+  };
+
+  const handleAttachClick = () => {
+    fileInputRef.current.click();
+  };
+
+  const handleDeleteMessage = async (id) => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/messages/${id}/delete`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      if (!response.ok) {
+        console.error('Failed to delete message:', await response.json());
+      }
+    } catch (error) {
+      console.error('Error deleting message:', error);
+    }
+  };
+
+  return (
+    <div className={`min-h-screen flex items-center justify-center p-4 font-sans
+      ${isDarkMode ? 'bg-gradient-to-br from-gray-900 to-blue-950' : 'bg-gradient-to-br from-sky-100 to-blue-200'}`}>
+      <div className={`p-6 rounded-xl shadow-lg w-full max-w-2xl flex flex-col h-[90vh] transform transition-all duration-300 hover:scale-105
+        ${isDarkMode ? 'bg-gray-800 text-gray-100' : 'bg-white'}`}>
+        <div className="flex justify-between items-center mb-4">
+          <h2 className={`text-3xl font-extrabold text-center flex-grow ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>
+            Charity Group Chat
+          </h2>
+          <div className="flex space-x-2">
+            {isAdmin && (
+              <button
+                onClick={onGoToAdminDashboard}
+                className={`font-bold py-2 px-4 rounded-xl shadow-md transition duration-300 ease-in-out transform hover:scale-105 text-sm
+                  ${isDarkMode ? 'bg-blue-700 hover:bg-blue-800 text-white' : 'bg-blue-500 hover:bg-blue-600 text-white'}`}
+              >
+                Admin Dashboard
+              </button>
+            )}
+            <button
+              onClick={onGoToVivaQuestions}
+              className={`font-bold py-2 px-4 rounded-xl shadow-md transition duration-300 ease-in-out transform hover:scale-105 text-sm
+                ${isDarkMode ? 'bg-sky-700 hover:bg-sky-800 text-white' : 'bg-sky-500 hover:bg-sky-600 text-white'}`}
+            >
+              Viva Questions
+            </button>
+            <button
+              onClick={() => setShowMembersModal(true)}
+              className={`font-bold py-2 px-4 rounded-xl shadow-md transition duration-300 ease-in-out transform hover:scale-105 text-sm
+                ${isDarkMode ? 'bg-blue-700 hover:bg-blue-800 text-white' : 'bg-blue-500 hover:bg-blue-600 text-white'}`}
+            >
+              View Members
+            </button>
+            <button
+              onClick={onLogout}
+              className={`font-bold py-2 px-4 rounded-xl shadow-md transition duration-300 ease-in-out transform hover:scale-105 text-sm
+                ${isDarkMode ? 'bg-gray-700 hover:bg-gray-800 text-white' : 'bg-gray-500 hover:bg-gray-600 text-white'}`}
+            >
+              Logout
+            </button>
+          </div>
+        </div>
+        <p className={`text-md mb-4 text-center ${isDarkMode ? 'text-gray-300' : 'text-gray-700'}`}>
+          Logged in as: <span className={`font-semibold ${isDarkMode ? 'text-blue-400' : 'text-blue-600'}`}>{userName || 'User'}</span>
+          {isAdmin && <span className="ml-2 px-2 py-1 bg-red-400 text-white text-xs rounded-full">ADMIN</span>}
+        </p>
+
+        {/* Removed: Visual Indicator for Socket.IO Connection Status */}
+
+        {/* Visual Indicator for Chat Status */}
+        <div className={`mb-4 p-2 text-sm text-center rounded-lg shadow-md
+          ${isChatEnabled ? 'bg-green-500 text-white' : 'bg-red-500 text-white'}`}>
+          Chat Status: {isChatEnabled ? 'ENABLED' : 'DISABLED'}
+        </div>
+
+        {!isChatEnabled && (
+          <div className="mb-4 p-3 text-sm text-center text-white bg-red-400 rounded-lg shadow-md">
+            Chat is currently disabled by the admin. You cannot send messages.
+          </div>
+        )}
+
+        <div className={`flex-1 overflow-y-auto p-4 border rounded-lg mb-4
+          ${isDarkMode ? 'bg-gray-700 border-gray-600' : 'bg-gray-50 border-gray-200'}`}>
+          {messages.map((msg) => (
+            <div
+              key={msg.id}
+              className={`flex mb-3 ${msg.senderName === userName ? 'justify-end' : 'justify-start'}`}
+            >
+              <div
+                className={`max-w-[70%] p-3 rounded-xl shadow-sm relative
+                  ${msg.senderName === userName
+                    ? (isDarkMode ? 'bg-blue-700 text-white' : 'bg-blue-300 text-gray-900') + ' rounded-br-none'
+                    : (isDarkMode ? 'bg-gray-600 text-gray-100' : 'bg-gray-100 text-gray-800') + ' rounded-bl-none'
+                  } ${msg.isDeleted ? 'opacity-60 italic' : ''}`}
+              >
+                <div className={`font-bold text-sm mb-1 ${msg.senderName === adminUserName ? (isDarkMode ? 'text-purple-300' : 'text-purple-700') : ''}`}>
+                  {msg.senderName === userName ? 'You' : msg.senderName}
+                </div>
+                {msg.text && <p className="text-sm break-words">{msg.text}</p>}
+                {msg.fileUrl && !msg.isDeleted && (
+                  <div className="mt-2">
+                    {msg.fileType && msg.fileType.startsWith('image/') ? (
+                      <img
+                        src={msg.fileUrl}
+                        alt={msg.fileName}
+                        className="max-w-full h-auto rounded-md border border-gray-300"
+                        style={{ maxHeight: '200px' }}
+                        onError={(e) => { e.target.onerror = null; e.target.src = 'https://placehold.co/150x100/CCCCCC/000000?text=Image+Error'; }}
+                      />
+                    ) : (
+                      <a href={msg.fileUrl} target="_blank" rel="noopener noreferrer"
+                         className={`flex items-center gap-2 text-sm p-2 rounded-md border
+                           ${isDarkMode ? 'bg-gray-800 text-blue-400 border-gray-500' : 'bg-gray-100 text-blue-600 border-gray-200'} hover:underline`}>
+                        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                          <path fillRule="evenodd" d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.414L14.586 5A2 2 0 0115 6.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4zm2 0v12h7V6.414L11.586 4H6zM10 8a1 1 0 011 1v3a1 1 0 11-2 0V9a1 1 0 011-1z" clipRule="evenodd" />
+                        </svg>
+                        <span>{msg.fileName || 'Download File'}</span>
+                      </a>
+                    )}
+                  </div>
+                )}
+                <div className={`text-xs mt-1 opacity-75 text-right ${isDarkMode ? 'text-gray-300' : ''}`}>
+                  {msg.timestamp}
+                </div>
+                {isAdmin && !msg.isDeleted && (
+                  <button
+                    onClick={() => handleDeleteMessage(msg.id)}
+                    className="absolute top-1 right-1 bg-red-300 hover:bg-red-500 text-white rounded-full p-1 text-xs leading-none"
+                    title="Delete Message"
+                  >
+                    &times;
+                  </button>
+                )}
+              </div>
+            </div>
+          ))}
+          <div ref={messagesEndRef} />
+        </div>
+
+        <form onSubmit={handleSendMessage} className="flex gap-2 items-center">
+          <input
+            type="file"
+            ref={fileInputRef}
+            onChange={handleFileChange}
+            className="hidden"
+            // Ensure disabled state is directly tied to the prop
+            disabled={!isChatEnabled}
+          />
+          <button
+            type="button"
+            onClick={handleAttachClick}
+            className={`font-bold py-2 px-3 rounded-xl shadow-md transition duration-300 ease-in-out transform hover:scale-105
+              ${isChatEnabled
+                ? (isDarkMode ? 'bg-gray-600 hover:bg-gray-500 text-gray-100' : 'bg-gray-200 hover:bg-gray-300 text-gray-700')
+                : 'bg-gray-300 text-gray-500 cursor-not-allowed'
+              }`}
+            title="Attach File"
+            // Ensure disabled state is directly tied to the prop
+            disabled={!isChatEnabled}
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+              <path fillRule="evenodd" d="M8 4a3 3 0 00-3 3v4a5 5 0 0010 0V7a1 1 0 112 0v4a7 7 0 11-14 0V7a5 5 0 0110 0v4a3 3 0 11-6 0V7a1 1 0 012 0v4a1 1 0 102 0V7a3 3 0 00-3-3z" clipRule="evenodd" />
+            </svg>
+          </button>
+
+          <input
+            type="text"
+            className={`flex-1 px-4 py-2 border rounded-xl shadow-sm focus:outline-none sm:text-sm
+              ${isChatEnabled
+                ? (isDarkMode ? 'border-gray-600 bg-gray-700 text-gray-100 focus:ring-blue-500 focus:border-blue-500' : 'border-gray-300 focus:ring-blue-500 focus:border-blue-500')
+                : 'border-gray-400 bg-gray-100 cursor-not-allowed'
+              }`}
+            placeholder={isChatEnabled ? (selectedFile ? `Sending: ${selectedFile.name}` : "Type your message...") : "Chat is disabled by admin."}
+            value={newMessage}
+            onChange={(e) => setNewMessage(e.target.value)}
+            // Ensure disabled state is directly tied to the prop
+            disabled={!isChatEnabled || !!selectedFile}
+          />
+          <button
+            type="submit"
+            className={`font-bold py-2 px-4 rounded-xl shadow-md transition duration-300 ease-in-out transform hover:scale-105
+              ${isChatEnabled
+                ? (isDarkMode ? 'bg-blue-700 hover:bg-blue-800 text-white' : 'bg-blue-500 hover:bg-blue-600 text-white')
+                : 'bg-gray-400 text-gray-200 cursor-not-allowed'
+              }`}
+            // Ensure disabled state is directly tied to the prop
+            disabled={!isChatEnabled}
+          >
+            Send
+          </button>
+        </form>
+        {selectedFile && isChatEnabled && (
+          <div className={`mt-2 text-sm flex items-center justify-between p-2 rounded-md
+            ${isDarkMode ? 'text-gray-300 bg-blue-900' : 'bg-gray-600 bg-blue-50'}`}>
+            <span>File selected: <span className="font-semibold">{selectedFile.name}</span></span>
+            <button
+              onClick={() => setSelectedFile(null)}
+              className="text-red-500 hover:text-red-700 font-bold ml-2"
+            >
+              Clear
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* Group Members Modal */}
+      {showMembersModal && (
+        <div className="fixed inset-0 bg-gray-600 bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className={`p-6 rounded-xl shadow-2xl w-full max-w-sm
+            ${isDarkMode ? 'bg-gray-800 text-gray-100' : 'bg-white'}`}>
+            <div className="flex justify-between items-center mb-4">
+              <h3 className={`text-2xl font-bold ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>Group Members</h3>
+              <button
+                onClick={() => setShowMembersModal(false)}
+                className={`text-2xl font-bold ${isDarkMode ? 'text-gray-400 hover:text-gray-200' : 'text-gray-500 hover:text-gray-700'}`}
+              >
+                &times;
+              </button>
+            </div>
+            <ul className="space-y-2">
+              {groupMembers.map((member) => (
+                <li key={member.id} className={`p-2 rounded-md ${isDarkMode ? 'bg-gray-700 text-gray-100' : 'bg-gray-100 text-gray-800'}`}>
+                  {member.name} {member.isAdmin && '(Admin)'} {!member.isApproved && '(Pending)'}
+                </li>
+              ))}
+            </ul>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+
+// Main App component for handling login and registration
 function App() {
-  // --- IMPORTANT FOR RENDER DEPLOYMENT & PREVIEW ---
-  // For the Canvas preview, process.env is not available.
-  // For Render deployment, you MUST set these as environment variables in Render's dashboard.
-  // If you are running locally, create a .env file in your project root with these variables.
-  // REACT_APP_BACKEND_API_URL = https://chat-backend-api-rhu4.onrender.com/api
-  // REACT_APP_BACKEND_SOCKET_URL = https://chat-backend-api-rhu4.onrender.com
-
-  // Use process.env for deployment, fallback to hardcoded for Canvas preview if needed,
-  // or ensure your Render environment variables are correctly set.
-  const API_BASE_URL = process.env.REACT_APP_BACKEND_API_URL || 'https://chat-backend-api-rhu4.onrender.com/api';
-  const SOCKET_URL = process.env.REACT_APP_BACKEND_SOCKET_URL || 'https://chat-backend-api-rhu4.onrender.com';
-
-
-  // Use useRef to hold the socket instance, so it persists across re-renders
-  const socketRef = useRef(null);
-
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [loading, setLoading] = useState(true);
-
-  const [loggedInUserId, setLoggedInUserId] = useState(null);
+  const [isLoginView, setIsLoginView] = useState(true);
+  const [loggedInUserId, setLoggedInUserId] = useState(null); // Store user ID
   const [loggedInUserName, setLoggedInUserName] = useState('');
   const [isAdmin, setIsAdmin] = useState(false);
-  const [currentView, setCurrentView] = useState('auth');
+  const [currentView, setCurrentView] = useState('auth'); // 'auth', 'chat', 'admin', 'pendingApproval', 'vivaQuestions', 'otpVerification'
   const [isChatEnabled, setIsChatEnabled] = useState(true);
   const [isVivaQuestionsAddEnabled, setIsVivaQuestionsAddEnabled] = useState(true);
   const [isDarkMode, setIsDarkMode] = useState(false);
-  const adminUserName = 'Admin User';
+  const [isSocketConnected, setIsSocketConnected] = useState(socket.connected); // Track socket connection
+  const adminUserName = 'Admin Akash'; // Define admin user name for consistent highlighting - UPDATED TO 'Admin Akash'
 
+  // OTP related states
   const [otpSent, setOtpSent] = useState(false);
-  const [tempNewUserEmail, setTempNewUserEmail] = useState('');
-  const [tempNewUserId, setTempNewUserId] = useState('');
-  const [enteredOtp, setEnteredOtp] = useState('');
+  const [tempNewUserEmail, setTempNewUserEmail] = useState(''); // Store email for OTP screen
+  const [tempNewUserId, setTempNewUserId] = useState(''); // Store ID for OTP verification
+  const [enteredOtp, setEnteredOtp] = useState(''); // User entered OTP
 
+  // Centralized user state - now fetched from backend
   const [allUsers, setAllUsers] = useState([]);
 
   const [name, setName] = useState('');
@@ -43,1375 +906,539 @@ function App() {
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [message, setMessage] = useState('');
-  const [isLoginView, setIsLoginView] = useState(true);
 
-  // --- DarkModeToggle Component (nested) ---
-  const DarkModeToggle = ({ isDarkMode, toggleDarkMode }) => {
-    return (
-      <button
-        onClick={toggleDarkMode}
-        className={`p-2 rounded-full shadow-md transition-all duration-300 ${
-          isDarkMode ? 'bg-gray-700 text-yellow-400' : 'bg-yellow-400 text-gray-800'
-        }`}
-        aria-label="Toggle dark mode"
-      >
-        {isDarkMode ? (
-          <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 20 20">
-            <path d="M17.293 13.293A8 8 0 016.707 2.707a8.001 8.001 0 1010.586 10.586z"></path>
-          </svg>
-        ) : (
-          <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 20 20">
-            <path
-              fillRule="evenodd"
-              d="M10 2a1 1 0 011 1v1a1 1 0 11-2 0V3a1 1 0 011-1zm4 4a1 1 0 011 1v1a1 1 0 11-2 0V7a1 1 0 011-1zm-4 4a1 1 0 011 1v1a1 1 0 11-2 0v-1a1 1 0 011-1zm-4 4a1 1 0 011 1v1a1 1 0 11-2 0v-1a1 1 0 011-1zm8-4a1 1 0 011 1v1a1 1 0 11-2 0v-1a1 1 0 011-1zM4 10a1 1 0 011 1v1a1 1 0 11-2 0v-1a1 1 0 011-1zM10 16a1 1 0 011 1v1a1 1 0 11-2 0v-1a1 1 0 011-1zm4-4a1 1 0 011 1v1a1 1 0 11-2 0v-1a1 1 0 011-1zM6 10a1 1 0 011 1v1a1 1 0 11-2 0v-1a1 1 0 011-1z"
-              clipRule="evenodd"
-            ></path>
-          </svg>
-        )}
-      </button>
-    );
-  };
-
-  // --- Register.js Component (nested) ---
-  const Register = ({ name, setName, email, setEmail, password, setPassword, confirmPassword, setConfirmPassword, handleRegister, message, isDarkMode, setIsLoginView }) => {
-    return (
-      <form onSubmit={handleRegister} className="space-y-6">
-        <div>
-          <label htmlFor="name" className={`block text-sm font-medium mb-1 ${isDarkMode ? 'text-gray-300' : 'text-gray-700'}`}>
-            Name
-          </label>
-          <input
-            id="name"
-            name="name"
-            type="text"
-            autoComplete="name"
-            required
-            className={`appearance-none relative block w-full px-3 py-2 border rounded-md shadow-sm placeholder-gray-400 focus:outline-none sm:text-sm
-              ${isDarkMode ? 'bg-gray-700 border-gray-600 text-gray-100 focus:ring-blue-500 focus:border-blue-500' : 'border-gray-300 focus:ring-blue-400 focus:border-blue-400'}`}
-            placeholder="Your Name"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-          />
-        </div>
-        <div>
-          <label htmlFor="email-address" className={`block text-sm font-medium mb-1 ${isDarkMode ? 'text-gray-300' : 'text-gray-700'}`}>
-            Email address
-          </label>
-          <input
-            id="email-address"
-            name="email"
-            type="email"
-            autoComplete="email"
-            required
-            className={`appearance-none relative block w-full px-3 py-2 border rounded-md shadow-sm placeholder-gray-400 focus:outline-none sm:text-sm
-              ${isDarkMode ? 'bg-gray-700 border-gray-600 text-gray-100 focus:ring-blue-500 focus:border-blue-500' : 'border-gray-300 focus:ring-blue-400 focus:border-blue-400'}`}
-            placeholder="Email address"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-          />
-        </div>
-        <div>
-          <label htmlFor="password" className={`block text-sm font-medium mb-1 ${isDarkMode ? 'text-gray-300' : 'text-gray-700'}`}>
-            Password
-          </label>
-          <input
-            id="password"
-            name="password"
-            type="password"
-            autoComplete="new-password"
-            required
-            className={`appearance-none relative block w-full px-3 py-2 border rounded-md shadow-sm placeholder-gray-400 focus:outline-none sm:text-sm
-              ${isDarkMode ? 'bg-gray-700 border-gray-600 text-gray-100 focus:ring-blue-500 focus:border-blue-500' : 'border-gray-300 focus:ring-blue-400 focus:border-400'}`}
-            placeholder="Password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-          />
-        </div>
-        <div>
-          <label htmlFor="confirm-password" className={`block text-sm font-medium mb-1 ${isDarkMode ? 'text-gray-300' : 'text-gray-700'}`}>
-            Confirm Password
-          </label>
-          <input
-            id="confirm-password"
-            name="confirm-password"
-            type="password"
-            autoComplete="new-password"
-            required
-            className={`appearance-none relative block w-full px-3 py-2 border rounded-md shadow-sm placeholder-gray-400 focus:outline-none sm:text-sm
-              ${isDarkMode ? 'bg-gray-700 border-gray-600 text-gray-100 focus:ring-blue-500 focus:border-blue-500' : 'border-gray-300 focus:ring-blue-400 focus:border-blue-400'}`}
-            placeholder="Confirm Password"
-            value={confirmPassword}
-            onChange={(e) => setConfirmPassword(e.target.value)}
-          />
-        </div>
-
-        <div>
-          <button
-            type="submit"
-            className={`group relative w-full flex justify-center py-2 px-4 border border-transparent text-sm font-medium rounded-md text-white shadow-md transition duration-300 ease-in-out transform hover:scale-105
-              ${isDarkMode ? 'bg-blue-700 hover:bg-blue-800 focus:ring-blue-600' : 'bg-blue-500 hover:bg-blue-600 focus:ring-blue-400'}`}
-          >
-            Register
-          </button>
-        </div>
-      </form>
-    );
-  };
-
-  // --- Login.js Component (nested) ---
-  const Login = ({ email, setEmail, password, setPassword, handleLogin, message, isDarkMode, setIsLoginView }) => {
-    return (
-      <form onSubmit={handleLogin} className="space-y-6">
-        <div>
-          <label htmlFor="email-address" className={`block text-sm font-medium mb-1 ${isDarkMode ? 'text-gray-300' : 'text-gray-700'}`}>
-            Email address
-          </label>
-          <input
-            id="email-address"
-            name="email"
-            type="email"
-            autoComplete="email"
-            required
-            className={`appearance-none relative block w-full px-3 py-2 border rounded-md shadow-sm placeholder-gray-400 focus:outline-none sm:text-sm
-              ${isDarkMode ? 'bg-gray-700 border-gray-600 text-gray-100 focus:ring-blue-500 focus:border-blue-500' : 'border-gray-300 focus:ring-blue-400 focus:border-blue-400'}`}
-            placeholder="Email address"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-          />
-        </div>
-        <div>
-          <label htmlFor="password" className={`block text-sm font-medium mb-1 ${isDarkMode ? 'text-gray-300' : 'text-gray-700'}`}>
-            Password
-          </label>
-          <input
-            id="password"
-            name="password"
-            type="password"
-            autoComplete="current-password"
-            required
-            className={`appearance-none relative block w-full px-3 py-2 border rounded-md shadow-sm placeholder-gray-400 focus:outline-none sm:text-sm
-              ${isDarkMode ? 'bg-gray-700 border-gray-600 text-gray-100 focus:ring-blue-500 focus:border-blue-500' : 'border-gray-300 focus:ring-blue-400 focus:border-blue-400'}`}
-            placeholder="Password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-          />
-        </div>
-
-        <div>
-          <button
-            type="submit"
-            className={`group relative w-full flex justify-center py-2 px-4 border border-transparent text-sm font-medium rounded-md text-white shadow-md transition duration-300 ease-in-out transform hover:scale-105
-              ${isDarkMode ? 'bg-blue-700 hover:bg-blue-800 focus:ring-blue-600' : 'bg-blue-500 hover:bg-blue-600 focus:ring-blue-400'}`}
-          >
-            Sign In
-          </button>
-        </div>
-      </form>
-    );
-  };
-
-  // --- ChatInput.js Component (nested) ---
-  const ChatInput = ({ newMessage, setNewMessage, handleSendMessage, isChatEnabled, privateMessageRecipient, cancelPrivateChat, getRecipientName, isDarkMode }) => {
-    const handleKeyPress = (e) => {
-      if (e.key === 'Enter' && !e.shiftKey) {
-        e.preventDefault();
-        handleSendMessage();
-      }
-    };
-
-    return (
-      <div className={`flex flex-row items-center h-16 rounded-xl w-full px-4
-        ${isDarkMode ? 'bg-gray-700' : 'bg-gray-100'}`}>
-        {privateMessageRecipient && (
-          <div className={`flex items-center mr-2 px-3 py-1 rounded-full text-sm font-medium
-            ${isDarkMode ? 'bg-purple-800 text-white' : 'bg-purple-200 text-purple-800'}`}>
-            Private to: {getRecipientName()}
-            <button onClick={cancelPrivateChat} className="ml-2 text-xs font-bold">
-              &times;
-            </button>
-          </div>
-        )}
-        <div className="flex-grow ml-4">
-          <div className="relative w-full">
-            <input
-              type="text"
-              placeholder={isChatEnabled ? "Type your message..." : "Chat is currently disabled by admin."}
-              className={`flex w-full border rounded-xl focus:outline-none focus:border-indigo-300 h-10 px-4
-                ${isDarkMode ? 'bg-gray-600 border-gray-500 text-gray-100 placeholder-gray-300' : 'border-gray-300'}`}
-              value={newMessage}
-              onChange={(e) => setNewMessage(e.target.value)}
-              onKeyPress={handleKeyPress}
-              disabled={!isChatEnabled}
-            />
-          </div>
-        </div>
-        <div className="ml-4">
-          <button
-            className={`flex items-center justify-center bg-indigo-500 hover:bg-indigo-600 rounded-xl text-white px-4 py-1 flex-shrink-0 transition duration-300 ease-in-out transform hover:scale-105
-              ${!isChatEnabled ? 'opacity-50 cursor-not-allowed' : ''}`}
-            onClick={handleSendMessage}
-            disabled={!isChatEnabled}
-          >
-            <span>Send</span>
-            <span className="ml-2">
-              <svg
-                className="w-4 h-4 transform rotate-45 -mt-px"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-                xmlns="http://www.w3.org/2000/svg"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth="2"
-                  d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"
-                ></path>
-              </svg>
-            </span>
-          </button>
-        </div>
-      </div>
-    );
-  };
-
-  // --- Chat.js Component (nested) ---
-  const Chat = ({ loggedInUserId, userName, isAdmin, onGoToAdminDashboard, groupMembers, isChatEnabled, onLogout, onGoToVivaQuestions, isDarkMode, adminUserName, socket }) => {
-    const [messages, setMessages] = useState([]);
-    const [newMessage, setNewMessage] = useState('');
-    const [privateMessageRecipient, setPrivateMessageRecipient] = useState(null);
-    const [showMembers, setShowMembers] = useState(false);
-    const [showChatDisabledMessage, setShowChatDisabledMessage] = useState(false);
-    const messagesEndRef = useRef(null);
-
-    const scrollToBottom = () => {
-      messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-    };
-
-    useEffect(() => {
-      const fetchMessages = async () => {
-        try {
-          const response = await fetch(`${API_BASE_URL}/messages`);
-          const data = await response.json();
-          setMessages(data);
-        } catch (error) {
-          console.error('Error fetching messages:', error);
-        }
-      };
-
-      fetchMessages();
-
-      if (socket) {
-        socket.on('message', (message) => {
-          setMessages((prevMessages) => [...prevMessages, message]);
-        });
-
-        socket.on('privateMessage', (message) => {
-          setMessages((prevMessages) => [...prevMessages, message]);
-        });
-
-        socket.on('chatStatusChanged', (status) => {
-          if (!status.isChatEnabled) {
-            setShowChatDisabledMessage(true);
-            setTimeout(() => setShowChatDisabledMessage(false), 5000);
-          }
-        });
-      }
-
-      return () => {
-        if (socket) {
-          socket.off('message');
-          socket.off('privateMessage');
-          socket.off('chatStatusChanged');
-        }
-      };
-    }, [socket]);
-
-    useEffect(() => {
-      scrollToBottom();
-    }, [messages]);
-
-    const handleSendMessage = useCallback(() => {
-      if (newMessage.trim() === '' || !socket) return;
-
-      const messageData = {
-        senderId: loggedInUserId,
-        senderName: userName,
-        text: newMessage,
-        timestamp: new Date().toISOString(),
-        isPrivate: !!privateMessageRecipient,
-        recipientId: privateMessageRecipient,
-      };
-
-      if (privateMessageRecipient) {
-        socket.emit('privateMessage', messageData);
-      } else {
-        socket.emit('message', messageData);
-      }
-
-      setNewMessage('');
-      setPrivateMessageRecipient(null);
-    }, [newMessage, loggedInUserId, userName, privateMessageRecipient, socket]);
-
-    const startPrivateChat = (memberId, memberName) => {
-      setPrivateMessageRecipient(memberId);
-      setNewMessage(`@${memberName} `);
-      setShowMembers(false);
-    };
-
-    const cancelPrivateChat = () => {
-      setPrivateMessageRecipient(null);
-      setNewMessage('');
-    };
-
-    const getRecipientName = () => {
-      const recipient = groupMembers.find(member => member.id === privateMessageRecipient);
-      return recipient ? recipient.name : 'Unknown';
-    };
-
-    return (
-      <div className={`flex h-screen antialiased text-gray-800 font-sans ${isDarkMode ? 'bg-gray-900 text-gray-100' : 'bg-gray-100'}`}>
-        <div className="flex flex-row h-full w-full overflow-hidden">
-          {/* Left Sidebar - Members List */}
-          <div className={`flex flex-col py-8 pl-6 pr-2 w-64 ${isDarkMode ? 'bg-gray-800 border-r border-gray-700' : 'bg-white border-r border-gray-200'} flex-shrink-0`}>
-            <div className="flex flex-row items-center justify-center h-12 w-full">
-              <div className={`flex items-center justify-center rounded-2xl text-indigo-700 ${isDarkMode ? 'bg-indigo-900' : 'bg-indigo-100'} h-10 w-10`}>
-                <svg
-                  className="w-6 h-6"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                  xmlns="http://www.w3.org/2000/svg"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth="2"
-                    d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"
-                  ></path>
-                </svg>
-              </div>
-              <div className={`ml-2 font-bold text-2xl ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>Chat App</div>
-            </div>
-            <div className="flex flex-col items-center mt-4 border-t border-gray-200 pt-4">
-              <div className={`text-lg font-semibold ${isDarkMode ? 'text-gray-300' : 'text-gray-700'}`}>
-                Hello, {userName}!
-              </div>
-              {isAdmin && (
-                <button
-                  onClick={onGoToAdminDashboard}
-                  className={`mt-2 px-4 py-2 rounded-lg text-sm font-medium transition duration-300 ease-in-out transform hover:scale-105
-                    ${isDarkMode ? 'bg-purple-700 hover:bg-purple-800 text-white' : 'bg-purple-600 hover:bg-purple-700 text-white'}`}
-                >
-                  Admin Dashboard
-                </button>
-              )}
-              <button
-                onClick={onGoToVivaQuestions}
-                className={`mt-2 px-4 py-2 rounded-lg text-sm font-medium transition duration-300 ease-in-out transform hover:scale-105
-                  ${isDarkMode ? 'bg-green-700 hover:bg-green-800 text-white' : 'bg-green-600 hover:bg-green-700 text-white'}`}
-              >
-                Viva Questions
-              </button>
-              <button
-                onClick={onLogout}
-                className={`mt-2 px-4 py-2 rounded-lg text-sm font-medium transition duration-300 ease-in-out transform hover:scale-105
-                  ${isDarkMode ? 'bg-red-700 hover:bg-red-800 text-white' : 'bg-red-600 hover:bg-red-700 text-white'}`}
-              >
-                Logout
-              </button>
-            </div>
-
-            <div className="flex flex-col mt-8">
-              <div className={`flex flex-row items-center justify-between text-xs ${isDarkMode ? 'text-gray-400' : 'text-gray-400'}`}>
-                <span className="font-bold">Group Members</span>
-                <span className={`flex items-center justify-center bg-gray-300 h-4 w-4 rounded-full ${isDarkMode ? 'bg-gray-700 text-gray-300' : 'bg-gray-300 text-gray-600'}`}>
-                  {groupMembers.length}
-                </span>
-              </div>
-              <div className="flex flex-col space-y-1 mt-4 -mx-2 h-full overflow-y-auto">
-                {groupMembers.map((member) => (
-                  <button
-                    key={member.id}
-                    className={`flex flex-row items-center hover:bg-gray-100 rounded-xl p-2 ${isDarkMode ? 'hover:bg-gray-700' : ''}`}
-                    onClick={() => startPrivateChat(member.id, member.name)}
-                    disabled={member.id === loggedInUserId}
-                  >
-                    <div className={`flex items-center justify-center h-8 w-8 rounded-full ${isDarkMode ? 'bg-indigo-800 text-white' : 'bg-indigo-200 text-indigo-800'}`}>
-                      {member.name.charAt(0).toUpperCase()}
-                    </div>
-                    <div className={`ml-2 text-sm font-semibold ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>
-                      {member.name} {member.id === loggedInUserId && "(You)"}
-                      {member.name === adminUserName && <span className="ml-1 text-xs px-2 py-0.5 rounded-full bg-yellow-500 text-white">Admin</span>}
-                    </div>
-                  </button>
-                ))}
-              </div>
-            </div>
-          </div>
-
-          {/* Chat Area */}
-          <div className="flex flex-col flex-auto h-full p-6">
-            <div className={`flex flex-col flex-auto flex-shrink-0 rounded-2xl h-full ${isDarkMode ? 'bg-gray-800' : 'bg-white'} p-4`}>
-              <div className="flex flex-col h-full overflow-x-hidden overflow-y-auto mb-4">
-                <div className="flex flex-col h-full">
-                  <div className="grid grid-cols-12 gap-y-2">
-                    {messages.map((msg, index) => (
-                      <div
-                        key={index}
-                        className={`col-span-12 p-3 rounded-lg ${
-                          msg.senderId === loggedInUserId
-                            ? 'col-start-6 col-end-13 bg-blue-600 text-white rounded-br-none self-end'
-                            : 'col-end-8 col-start-1 bg-gray-200 text-gray-800 rounded-bl-none self-start'
-                        } ${isDarkMode && msg.senderId !== loggedInUserId ? 'bg-gray-700 text-gray-200' : ''}`}
-                      >
-                        <div className="flex items-center">
-                          <div className={`flex items-center justify-center h-10 w-10 rounded-full flex-shrink-0 ${
-                            msg.senderId === loggedInUserId
-                              ? 'bg-blue-800'
-                              : (msg.senderName === adminUserName ? 'bg-yellow-600' : 'bg-indigo-500')
-                          } text-white`}>
-                            {msg.senderName.charAt(0).toUpperCase()}
-                          </div>
-                          <div className="ml-3">
-                            <div className="flex items-baseline">
-                              <div className={`font-bold text-sm ${msg.senderId === loggedInUserId ? 'text-white' : (msg.senderName === adminUserName ? 'text-yellow-400' : (isDarkMode ? 'text-gray-100' : 'text-gray-900'))}`}>
-                                {msg.senderName}
-                                {msg.senderName === adminUserName && <span className="ml-1 text-xs px-2 py-0.5 rounded-full bg-yellow-500 text-white">Admin</span>}
-                              </div>
-                              {msg.isPrivate && (
-                                <span className={`ml-2 text-xs px-2 py-0.5 rounded-full ${isDarkMode ? 'bg-purple-600 text-white' : 'bg-purple-200 text-purple-800'}`}>
-                                  Private to {msg.recipientId === loggedInUserId ? 'You' : groupMembers.find(m => m.id === msg.recipientId)?.name || 'Unknown'}
-                                </span>
-                              )}
-                              <div className={`ml-2 text-xs ${msg.senderId === loggedInUserId ? 'text-blue-200' : (isDarkMode ? 'text-gray-400' : 'text-gray-500')}`}>
-                                {new Date(msg.timestamp).toLocaleTimeString()}
-                              </div>
-                            </div>
-                            <div className={`mt-1 text-sm ${msg.senderId === loggedInUserId ? 'text-white' : (isDarkMode ? 'text-gray-200' : 'text-gray-800')}`}>
-                              {msg.text}
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                    <div ref={messagesEndRef} />
-                  </div>
-                </div>
-              </div>
-
-              <ChatInput
-                newMessage={newMessage}
-                setNewMessage={setNewMessage}
-                handleSendMessage={handleSendMessage}
-                isChatEnabled={isChatEnabled}
-                privateMessageRecipient={privateMessageRecipient}
-                cancelPrivateChat={cancelPrivateChat}
-                getRecipientName={getRecipientName}
-                isDarkMode={isDarkMode}
-              />
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  };
-
-  // --- AdminDashboard.js Component (nested) ---
-  const AdminDashboard = ({ loggedInUserId, userName, allUsers, onRemoveMember, onApproveMember, onGoToChat, isChatEnabled, onToggleChat, isVivaQuestionsAddEnabled, onToggleVivaQuestionsAdd, onLogout, isDarkMode, adminUserName }) => {
-    const [message, setMessage] = useState('');
-    const [activeTab, setActiveTab] = useState('pending');
-
-    const handleApprove = async (userId) => {
-      try {
-        const response = await fetch(`${API_BASE_URL}/admin/approve-user`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ userId, adminId: loggedInUserId }),
-        });
-        const data = await response.json();
-        if (response.ok) {
-          onApproveMember(userId);
-          setMessage(data.message);
-        } else {
-          setMessage(data.message || 'Failed to approve user.');
-        }
-      } catch (error) {
-        console.error('Error approving user:', error);
-        setMessage('Server error during approval.');
-      } finally {
-        setTimeout(() => setMessage(''), 3000);
-      }
-    };
-
-    const handleRemove = async (userId) => {
-      try {
-        const response = await fetch(`${API_BASE_URL}/admin/remove-user`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ userId, adminId: loggedInUserId }),
-        });
-        const data = await response.json();
-        if (response.ok) {
-          onRemoveMember(userId);
-          setMessage(data.message);
-        } else {
-          setMessage(data.message || 'Failed to remove user.');
-        }
-      } catch (error) {
-        console.error('Error removing user:', error);
-        setMessage('Server error during removal.');
-      } finally {
-        setTimeout(() => setMessage(''), 3000);
-      }
-    };
-
-    const handleToggleSetting = async (settingName, currentValue, onToggleFunction) => {
-      try {
-        const response = await fetch(`${API_BASE_URL}/admin/update-setting`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ settingName, settingValue: !currentValue, adminId: loggedInUserId }),
-        });
-        const data = await response.json();
-        if (response.ok) {
-          onToggleFunction();
-          setMessage(data.message);
-        } else {
-          setMessage(data.message || `Failed to update ${settingName}.`);
-        }
-      } catch (error) {
-        console.error(`Error toggling ${settingName}:`, error);
-        setMessage(`Server error toggling ${settingName}.`);
-      } finally {
-        setTimeout(() => setMessage(''), 3000);
-      }
-    };
-
-    const pendingUsers = allUsers.filter(user => !user.isAdmin && !user.isApproved && user.isEmailVerified);
-    const approvedUsers = allUsers.filter(user => user.isApproved);
-
-    return (
-      <div className={`min-h-screen flex flex-col items-center p-6 font-sans ${isDarkMode ? 'bg-gray-900 text-gray-100' : 'bg-sky-100 text-gray-900'}`}>
-        <div className={`w-full max-w-4xl p-8 rounded-xl shadow-lg ${isDarkMode ? 'bg-gray-800' : 'bg-white'}`}>
-          <h2 className={`text-4xl font-extrabold mb-6 text-center ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>
-            Admin Dashboard
-          </h2>
-
-          {message && (
-            <div className={`mb-4 p-3 text-sm text-center text-white rounded-lg shadow-md ${message.includes('successful') ? 'bg-green-500' : 'bg-blue-500'}`}>
-              {message}
-            </div>
-          )}
-
-          <div className="flex justify-center mb-6 space-x-4">
-            <button
-              onClick={() => setActiveTab('pending')}
-              className={`px-6 py-3 rounded-lg text-lg font-semibold transition duration-300 ease-in-out transform hover:scale-105
-                ${activeTab === 'pending' ? (isDarkMode ? 'bg-blue-600 text-white' : 'bg-blue-500 text-white') : (isDarkMode ? 'bg-gray-700 text-gray-300 hover:bg-blue-500 hover:text-white' : 'bg-gray-200 text-gray-700 hover:bg-blue-100')}`}
-            >
-              Pending Approvals ({pendingUsers.length})
-            </button>
-            <button
-              onClick={() => setActiveTab('settings')}
-              className={`px-6 py-3 rounded-lg text-lg font-semibold transition duration-300 ease-in-out transform hover:scale-105
-                ${activeTab === 'settings' ? (isDarkMode ? 'bg-blue-600 text-white' : 'bg-blue-500 text-white') : (isDarkMode ? 'bg-gray-700 text-gray-300 hover:bg-blue-500 hover:text-white' : 'bg-gray-200 text-gray-700 hover:bg-blue-100')}`}
-            >
-              Settings
-            </button>
-            <button
-              onClick={() => setActiveTab('members')}
-              className={`px-6 py-3 rounded-lg text-lg font-semibold transition duration-300 ease-in-out transform hover:scale-105
-                ${activeTab === 'members' ? (isDarkMode ? 'bg-blue-600 text-white' : 'bg-blue-500 text-white') : (isDarkMode ? 'bg-gray-700 text-gray-300 hover:bg-blue-500 hover:text-white' : 'bg-gray-200 text-gray-700 hover:bg-blue-100')}`}
-            >
-              Approved Members ({approvedUsers.length})
-            </button>
-          </div>
-
-          {activeTab === 'pending' && (
-            <div>
-              <h3 className={`text-2xl font-bold mb-4 ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>Users Awaiting Approval</h3>
-              {pendingUsers.length === 0 ? (
-                <p className={`${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>No users awaiting approval.</p>
-              ) : (
-                <ul className="space-y-3">
-                  {pendingUsers.map((user) => (
-                    <li key={user.id} className={`flex justify-between items-center p-4 rounded-lg shadow-sm ${isDarkMode ? 'bg-gray-700' : 'bg-gray-50'}`}>
-                      <span className={`${isDarkMode ? 'text-gray-200' : 'text-gray-800'}`}>{user.name} ({user.email})</span>
-                      <div>
-                        <button
-                          onClick={() => handleApprove(user.id)}
-                          className={`ml-2 px-4 py-2 rounded-lg text-sm font-medium transition duration-300 ease-in-out transform hover:scale-105
-                            ${isDarkMode ? 'bg-green-600 hover:bg-green-700 text-white' : 'bg-green-500 hover:bg-green-600 text-white'}`}
-                        >
-                          Approve
-                        </button>
-                        <button
-                          onClick={() => handleRemove(user.id)}
-                          className={`ml-2 px-4 py-2 rounded-lg text-sm font-medium transition duration-300 ease-in-out transform hover:scale-105
-                            ${isDarkMode ? 'bg-red-600 hover:bg-red-700 text-white' : 'bg-red-500 hover:bg-red-600 text-white'}`}
-                        >
-                          Remove
-                        </button>
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-          )}
-
-          {activeTab === 'members' && (
-            <div>
-              <h3 className={`text-2xl font-bold mb-4 ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>Approved Members</h3>
-              {approvedUsers.length === 0 ? (
-                <p className={`${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>No approved members.</p>
-              ) : (
-                <ul className="space-y-3">
-                  {approvedUsers.map((user) => (
-                    <li key={user.id} className={`flex justify-between items-center p-4 rounded-lg shadow-sm ${isDarkMode ? 'bg-gray-700' : 'bg-gray-50'}`}>
-                      <span className={`${isDarkMode ? 'text-gray-200' : 'text-gray-800'}`}>{user.name} ({user.email}) {user.isAdmin && <span className="ml-1 text-xs px-2 py-0.5 rounded-full bg-yellow-500 text-white">Admin</span>}</span>
-                      {!user.isAdmin && (
-                        <button
-                          onClick={() => handleRemove(user.id)}
-                          className={`ml-2 px-4 py-2 rounded-lg text-sm font-medium transition duration-300 ease-in-out transform hover:scale-105
-                            ${isDarkMode ? 'bg-red-600 hover:bg-red-700 text-white' : 'bg-red-500 hover:bg-red-600 text-white'}`}
-                        >
-                          Remove
-                        </button>
-                      )}
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-          )}
-
-          {activeTab === 'settings' && (
-            <div className="space-y-6">
-              <h3 className={`text-2xl font-bold mb-4 ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>Application Settings</h3>
-              <div className={`flex items-center justify-between p-4 rounded-lg shadow-sm ${isDarkMode ? 'bg-gray-700' : 'bg-gray-50'}`}>
-                <span className={`text-lg font-medium ${isDarkMode ? 'text-gray-200' : 'text-gray-800'}`}>Enable Chat Functionality</span>
-                <button
-                  onClick={() => handleToggleSetting('isChatEnabled', isChatEnabled, onToggleChat)}
-                  className={`px-4 py-2 rounded-lg text-sm font-medium transition duration-300 ease-in-out transform hover:scale-105
-                    ${isChatEnabled
-                      ? (isDarkMode ? 'bg-red-600 hover:bg-red-700 text-white' : 'bg-red-500 hover:bg-red-600 text-white')
-                      : (isDarkMode ? 'bg-green-600 hover:bg-green-700 text-white' : 'bg-green-500 hover:bg-green-600 text-white')
-                    }`}
-                >
-                  {isChatEnabled ? 'Disable' : 'Enable'}
-                </button>
-              </div>
-              <div className={`flex items-center justify-between p-4 rounded-lg shadow-sm ${isDarkMode ? 'bg-gray-700' : 'bg-gray-50'}`}>
-                <span className={`text-lg font-medium ${isDarkMode ? 'text-gray-200' : 'text-gray-800'}`}>Enable Viva Questions Adding</span>
-                <button
-                  onClick={() => handleToggleSetting('isVivaQuestionsAddEnabled', isVivaQuestionsAddEnabled, onToggleVivaQuestionsAdd)}
-                  className={`px-4 py-2 rounded-lg text-sm font-medium transition duration-300 ease-in-out transform hover:scale-105
-                    ${isVivaQuestionsAddEnabled
-                      ? (isDarkMode ? 'bg-red-600 hover:bg-red-700 text-white' : 'bg-red-500 hover:bg-red-600 text-white')
-                      : (isDarkMode ? 'bg-green-600 hover:bg-green-700 text-white' : 'bg-green-500 hover:bg-green-600 text-white')
-                    }`}
-                >
-                  {isVivaQuestionsAddEnabled ? 'Disable' : 'Enable'}
-                </button>
-              </div>
-            </div>
-          )}
-
-          <div className="mt-8 text-center">
-            <button
-              onClick={onGoToChat}
-              className={`mr-4 px-6 py-3 rounded-lg text-lg font-medium transition duration-300 ease-in-out transform hover:scale-105
-                ${isDarkMode ? 'bg-indigo-600 hover:bg-indigo-700 text-white' : 'bg-indigo-500 hover:bg-indigo-600 text-white'}`}
-            >
-              Go to Chat
-            </button>
-            <button
-              onClick={onLogout}
-              className={`px-6 py-3 rounded-lg text-lg font-medium transition duration-300 ease-in-out transform hover:scale-105
-                ${isDarkMode ? 'bg-red-700 hover:bg-red-800 text-white' : 'bg-red-600 hover:bg-red-700 text-white'}`}
-            >
-              Logout
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  };
-
-  // --- VivaQuestionsPage.js Component (nested) ---
-  const VivaQuestionsPage = ({ loggedInUserId, userName, isAdmin, onGoToChat, isVivaQuestionsAddEnabled, isDarkMode, adminUserName }) => {
-    const [questions, setQuestions] = useState([]);
-    const [newQuestion, setNewQuestion] = useState('');
-    const [newAnswer, setNewAnswer] = useState('');
-    const [message, setMessage] = useState('');
-    const [editingQuestionId, setEditingQuestionId] = useState(null);
-    const [editedQuestionText, setEditedQuestionText] = useState('');
-    const [editedAnswerText, setEditedAnswerText] = useState('');
-
-    useEffect(() => {
-      const fetchQuestions = async () => {
-        try {
-          const response = await fetch(`${API_BASE_URL}/viva-questions`);
-          const data = await response.json();
-          setQuestions(data);
-        } catch (error) {
-          console.error('Error fetching viva questions:', error);
-          setMessage('Failed to load viva questions.');
-        }
-      };
-      fetchQuestions();
-    }, []);
-
-    const handleAddQuestion = async (e) => {
-      e.preventDefault();
-      setMessage('');
-      if (!newQuestion.trim() || !newAnswer.trim()) {
-        setMessage('Question and Answer cannot be empty.');
-        return;
-      }
-
-      try {
-        const response = await fetch(`${API_BASE_URL}/viva-questions`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            question: newQuestion,
-            answer: newAnswer,
-            addedBy: userName,
-            addedById: loggedInUserId
-          }),
-        });
-        const data = await response.json();
-        if (response.ok) {
-          setQuestions((prev) => [...prev, data]);
-          setNewQuestion('');
-          setNewAnswer('');
-          setMessage('Question added successfully!');
-        } else {
-          setMessage(data.message || 'Failed to add question.');
-        }
-      } catch (error) {
-        console.error('Error adding question:', error);
-        setMessage('Server error adding question.');
-      } finally {
-        setTimeout(() => setMessage(''), 3000);
-      }
-    };
-
-    const handleDeleteQuestion = async (id) => {
-      setMessage('');
-      try {
-        const response = await fetch(`${API_BASE_URL}/viva-questions/${id}`, {
-          method: 'DELETE',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ userId: loggedInUserId, isAdmin }),
-        });
-        const data = await response.json();
-        if (response.ok) {
-          setQuestions((prev) => prev.filter((q) => q.id !== id));
-          setMessage('Question deleted successfully!');
-        } else {
-          setMessage(data.message || 'Failed to delete question.');
-        }
-      } catch (error) {
-        console.error('Error deleting question:', error);
-        setMessage('Server error deleting question.');
-      } finally {
-        setTimeout(() => setMessage(''), 3000);
-      }
-    };
-
-    const handleEditQuestion = (question) => {
-      setEditingQuestionId(question.id);
-      setEditedQuestionText(question.question);
-      setEditedAnswerText(question.answer);
-    };
-
-    const handleSaveEdit = async (id) => {
-      setMessage('');
-      if (!editedQuestionText.trim() || !editedAnswerText.trim()) {
-        setMessage('Edited question and answer cannot be empty.');
-        return;
-      }
-      try {
-        const response = await fetch(`${API_BASE_URL}/viva-questions/${id}`, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            question: editedQuestionText,
-            answer: editedAnswerText,
-            userId: loggedInUserId,
-            isAdmin
-          }),
-        });
-        const data = await response.json();
-        if (response.ok) {
-          setQuestions((prev) =>
-            prev.map((q) =>
-              q.id === id ? { ...q, question: editedQuestionText, answer: editedAnswerText } : q
-            )
-          );
-          setEditingQuestionId(null);
-          setEditedQuestionText('');
-          setEditedAnswerText('');
-          setMessage('Question updated successfully!');
-        } else {
-          setMessage(data.message || 'Failed to update question.');
-        }
-      } catch (error) {
-        console.error('Error updating question:', error);
-        setMessage('Server error updating question.');
-      } finally {
-        setTimeout(() => setMessage(''), 3000);
-      }
-    };
-
-    const handleCancelEdit = () => {
-      setEditingQuestionId(null);
-      setEditedQuestionText('');
-      setEditedAnswerText('');
-    };
-
-    return (
-      <div className={`min-h-screen flex flex-col items-center p-6 font-sans ${isDarkMode ? 'bg-gray-900 text-gray-100' : 'bg-sky-100 text-gray-900'}`}>
-        <div className={`w-full max-w-3xl p-8 rounded-xl shadow-lg ${isDarkMode ? 'bg-gray-800' : 'bg-white'}`}>
-          <h2 className={`text-4xl font-extrabold mb-6 text-center ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>
-            Viva Questions
-          </h2>
-
-          {message && (
-            <div className={`mb-4 p-3 text-sm text-center text-white rounded-lg shadow-md ${message.includes('successful') ? 'bg-green-500' : 'bg-blue-500'}`}>
-              {message}
-            </div>
-          )}
-
-          {isVivaQuestionsAddEnabled && (
-            <form onSubmit={handleAddQuestion} className={`mb-8 p-6 rounded-lg shadow-md ${isDarkMode ? 'bg-gray-700' : 'bg-gray-50'}`}>
-              <h3 className={`text-2xl font-bold mb-4 ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>Add New Question</h3>
-              <div className="mb-4">
-                <label htmlFor="new-question" className={`block text-sm font-medium mb-1 ${isDarkMode ? 'text-gray-300' : 'text-gray-700'}`}>
-                  Question
-                </label>
-                <textarea
-                  id="new-question"
-                  rows="3"
-                  className={`w-full p-2 border rounded-md resize-y focus:outline-none focus:ring-blue-400 focus:border-blue-400
-                    ${isDarkMode ? 'bg-gray-600 border-gray-500 text-gray-100' : 'border-gray-300'}`}
-                  value={newQuestion}
-                  onChange={(e) => setNewQuestion(e.target.value)}
-                  placeholder="Enter your question here..."
-                  required
-                ></textarea>
-              </div>
-              <div className="mb-4">
-                <label htmlFor="new-answer" className={`block text-sm font-medium mb-1 ${isDarkMode ? 'text-gray-300' : 'text-gray-700'}`}>
-                  Answer
-                </label>
-                <textarea
-                  id="new-answer"
-                  rows="3"
-                  className={`w-full p-2 border rounded-md resize-y focus:outline-none focus:ring-blue-400 focus:border-blue-400
-                    ${isDarkMode ? 'bg-gray-600 border-gray-500 text-gray-100' : 'border-gray-300'}`}
-                  value={newAnswer}
-                  onChange={(e) => setNewAnswer(e.target.value)}
-                  placeholder="Enter the answer here..."
-                  required
-                ></textarea>
-              </div>
-              <button
-                type="submit"
-                className={`w-full py-2 px-4 rounded-lg text-white font-medium transition duration-300 ease-in-out transform hover:scale-105
-                  ${isDarkMode ? 'bg-green-600 hover:bg-green-700' : 'bg-green-500 hover:bg-green-600'}`}
-              >
-                Add Question
-              </button>
-            </form>
-          )}
-
-          <h3 className={`text-2xl font-bold mb-4 ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>All Questions</h3>
-          {questions.length === 0 ? (
-            <p className={`${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>No questions added yet.</p>
-          ) : (
-            <ul className="space-y-4">
-              {questions.map((q) => (
-                <li key={q.id} className={`p-5 rounded-lg shadow-md ${isDarkMode ? 'bg-gray-700' : 'bg-white'}`}>
-                  {editingQuestionId === q.id ? (
-                    <div>
-                      <div className="mb-3">
-                        <label htmlFor={`edit-question-${q.id}`} className={`block text-sm font-medium mb-1 ${isDarkMode ? 'text-gray-300' : 'text-gray-700'}`}>
-                          Question
-                        </label>
-                        <textarea
-                          id={`edit-question-${q.id}`}
-                          rows="2"
-                          className={`w-full p-2 border rounded-md focus:outline-none focus:ring-blue-400 focus:border-blue-400
-                            ${isDarkMode ? 'bg-gray-600 border-gray-500 text-gray-100' : 'border-gray-300'}`}
-                          value={editedQuestionText}
-                          onChange={(e) => setEditedQuestionText(e.target.value)}
-                        ></textarea>
-                      </div>
-                      <div className="mb-3">
-                        <label htmlFor={`edit-answer-${q.id}`} className={`block text-sm font-medium mb-1 ${isDarkMode ? 'text-gray-300' : 'text-gray-700'}`}>
-                          Answer
-                        </label>
-                        <textarea
-                          id={`edit-answer-${q.id}`}
-                          rows="2"
-                          className={`w-full p-2 border rounded-md focus:outline-none focus:ring-blue-400 focus:border-blue-400
-                            ${isDarkMode ? 'bg-gray-600 border-gray-500 text-gray-100' : 'border-gray-300'}`}
-                          value={editedAnswerText}
-                          onChange={(e) => setEditedAnswerText(e.target.value)}
-                        ></textarea>
-                      </div>
-                      <div className="flex justify-end space-x-2">
-                        <button
-                          onClick={() => handleSaveEdit(q.id)}
-                          className={`px-4 py-2 rounded-lg text-sm font-medium transition duration-300 ease-in-out transform hover:scale-105
-                            ${isDarkMode ? 'bg-blue-600 hover:bg-blue-700 text-white' : 'bg-blue-500 hover:bg-blue-600 text-white'}`}
-                        >
-                          Save
-                        </button>
-                        <button
-                          onClick={handleCancelEdit}
-                          className={`px-4 py-2 rounded-lg text-sm font-medium transition duration-300 ease-in-out transform hover:scale-105
-                            ${isDarkMode ? 'bg-gray-600 hover:bg-gray-500 text-gray-200' : 'bg-gray-300 hover:bg-gray-400 text-gray-800'}`}
-                        >
-                          Cancel
-                        </button>
-                      </div>
-                    </div>
-                  ) : (
-                    <>
-                      <p className={`font-semibold text-lg mb-2 ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>
-                        Q: {q.question}
-                      </p>
-                      <p className={`mb-2 ${isDarkMode ? 'text-gray-300' : 'text-gray-700'}`}>
-                        A: {q.answer}
-                      </p>
-                      <p className={`text-xs ${isDarkMode ? 'text-gray-400' : 'text-gray-500'}`}>
-                        Asked by: {q.addedBy} {q.addedBy === adminUserName && <span className="ml-1 text-xs px-2 py-0.5 rounded-full bg-yellow-500 text-white">Admin</span>} on {new Date(q.timestamp).toLocaleDateString()}
-                      </p>
-                      <div className="mt-3 flex justify-end space-x-2">
-                        {(isAdmin || loggedInUserId === q.addedById) && (
-                          <>
-                            <button
-                              onClick={() => handleEditQuestion(q)}
-                              className={`px-4 py-2 rounded-lg text-sm font-medium transition duration-300 ease-in-out transform hover:scale-105
-                                ${isDarkMode ? 'bg-yellow-600 hover:bg-yellow-700 text-white' : 'bg-yellow-500 hover:bg-yellow-600 text-white'}`}
-                            >
-                              Edit
-                            </button>
-                            <button
-                              onClick={() => handleDeleteQuestion(q.id)}
-                              className={`px-4 py-2 rounded-lg text-sm font-medium transition duration-300 ease-in-out transform hover:scale-105
-                                ${isDarkMode ? 'bg-red-600 hover:bg-red-700 text-white' : 'bg-red-500 hover:bg-red-600 text-white'}`}
-                            >
-                              Delete
-                            </button>
-                          </>
-                        )}
-                      </div>
-                    </>
-                  )}
-                </li>
-              ))}
-            </ul>
-          )}
-
-          <div className="mt-8 text-center">
-            <button
-              onClick={onGoToChat}
-              className={`px-6 py-3 rounded-lg text-lg font-medium transition duration-300 ease-in-out transform hover:scale-105
-                ${isDarkMode ? 'bg-indigo-600 hover:bg-indigo-700 text-white' : 'bg-indigo-500 hover:bg-indigo-600 text-white'}`}
-            >
-              Go to Chat
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  };
-
-  useEffect(() => {
-    // Initialize socket connection only once when component mounts
-    if (!socketRef.current) {
-      socketRef.current = io(SOCKET_URL, {
-        transports: ['websocket'],
-        reconnectionAttempts: 5,
-        reconnectionDelay: 1000,
-      });
-
-      socketRef.current.on('connect', () => {
-        console.log('Connected to socket server');
-      });
-
-      socketRef.current.on('disconnect', () => {
-        console.log('Disconnected from socket server');
-      });
-
-      socketRef.current.on('connect_error', (error) => {
-        console.error('Socket connection error:', error);
-      });
-    }
-
-    // Clean up on component unmount
-    return () => {
-      if (socketRef.current) {
-        socketRef.current.disconnect();
-        socketRef.current = null;
-      }
-    };
-  }, [SOCKET_URL]); // Re-run if SOCKET_URL changes (though it's usually static)
-
-  const checkAuth = useCallback(async () => {
-    setLoading(true);
-    const token = localStorage.getItem('token');
-    if (token) {
-      try {
-        const response = await fetch(`${API_BASE_URL}/auth/verify-token`, {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        const data = await response.json();
-        if (response.ok) {
-          setIsAuthenticated(true);
-          setLoggedInUserId(data.userId);
-          setLoggedInUserName(data.name);
-          setIsAdmin(data.isAdmin);
-          setIsChatEnabled(data.isChatEnabled);
-          setIsVivaQuestionsAddEnabled(data.isVivaQuestionsAddEnabled);
-          await fetchAllUsers(token);
-        } else {
-          setIsAuthenticated(false);
-          localStorage.removeItem('token');
-          setMessage(data.message || 'Session expired. Please log in again.');
-        }
-      } catch (error) {
-        console.error('Auth check error:', error);
-        setIsAuthenticated(false);
-        localStorage.removeItem('token');
-        setMessage('Network error or server unavailable. Please try again.');
-      }
-    }
-    setLoading(false);
-  }, [API_BASE_URL]);
-
-  useEffect(() => {
-    checkAuth();
-  }, [checkAuth]);
-
-  const fetchAllUsers = async (token) => {
+  // Fetch initial settings and users on app load
+  const fetchInitialData = useCallback(async () => {
     try {
-      const response = await fetch(`${API_BASE_URL}/users`, {
-        headers: { Authorization: `Bearer ${token}` },
+      const settingsResponse = await fetch(`${API_BASE_URL}/settings`);
+      const settingsData = await settingsResponse.json();
+      setIsChatEnabled(settingsData.isChatEnabled);
+      setIsVivaQuestionsAddEnabled(settingsData.isVivaQuestionsAddEnabled);
+
+      const usersResponse = await fetch(`${API_BASE_URL}/users`);
+      const usersData = await usersResponse.json();
+      setAllUsers(usersData);
+    } catch (error) {
+      console.error('Error fetching initial app data:', error);
+      setMessage('Failed to load initial app data. Please check server connection.');
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchInitialData();
+
+    // Debugging logs for Socket.IO events in App component
+    socket.on('userApproved', (userId) => {
+      console.log('Socket.IO: Received userApproved', userId);
+      setAllUsers(prevUsers => prevUsers.map(u => u.id === userId ? { ...u, isApproved: true } : u));
+    });
+
+    socket.on('userRemoved', (userId) => {
+      console.log('Socket.IO: Received userRemoved', userId);
+      setAllUsers(prevUsers => prevUsers.filter(u => u.id !== userId));
+    });
+
+    socket.on('settingUpdated', ({ settingName, settingValue }) => {
+      console.log(`App Component: Socket.IO: Received settingUpdated: ${settingName} = ${settingValue}`);
+      if (settingName === 'isChatEnabled') {
+        setIsChatEnabled(settingValue);
+        console.log(`App Component: isChatEnabled updated to: ${settingValue}`); // Added log
+        setMessage(`Chat is now ${settingValue ? 'ENABLED' : 'DISABLED'} by admin.`);
+      } else if (settingName === 'isVivaQuestionsAddEnabled') {
+        setIsVivaQuestionsAddEnabled(settingValue);
+        console.log(`App Component: isVivaQuestionsAddEnabled updated to: ${settingValue}`); // Added log
+        setMessage(`Viva Q&A Add is now ${settingValue ? 'ENABLED' : 'DISABLED'} by admin.`);
+      }
+      setTimeout(() => setMessage(''), 2000);
+    });
+
+    // Socket.IO connection status listeners
+    socket.on('connect', () => {
+      console.log('Socket.IO: Connected to server!');
+      setIsSocketConnected(true);
+    });
+
+    socket.on('disconnect', () => {
+      console.log('Socket.IO: Disconnected from server.');
+      setIsSocketConnected(false);
+    });
+
+    socket.on('connect_error', (err) => {
+      console.error('Socket.IO: Connection Error:', err.message);
+      setIsSocketConnected(false);
+    });
+
+
+    return () => {
+      socket.off('userApproved');
+      socket.off('userRemoved');
+      socket.off('settingUpdated');
+      socket.off('connect');
+      socket.off('disconnect');
+      socket.off('connect_error');
+    };
+  }, [fetchInitialData]);
+
+
+  /**
+   * Handles the login form submission.
+   */
+  const handleLogin = async (e) => {
+    e.preventDefault();
+    setMessage('');
+
+    if (!email || !password) {
+      setMessage('Please fill in all fields.');
+      return;
+    }
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password })
       });
       const data = await response.json();
+
       if (response.ok) {
-        setAllUsers(data);
+        setLoggedInUserId(data.user.id);
+        setLoggedInUserName(data.user.name);
+        setIsAdmin(data.user.isAdmin);
+
+        if (data.user.isAdmin) {
+          setMessage('Admin Login successful!');
+          setCurrentView('admin');
+        } else if (data.user.isEmailVerified && data.user.isApproved) {
+          setMessage('Login successful!');
+          setCurrentView('chat');
+        } else if (data.user.isEmailVerified && !data.user.isApproved) {
+          setMessage('Your account is email verified but awaiting admin approval.');
+          setCurrentView('pendingApproval');
+        } else { // Not email verified
+          setMessage('Your account is not email verified. Please verify your email with the OTP.');
+          setTempNewUserEmail(email); // Set email for OTP screen
+          setCurrentView('auth'); // Stay on auth page, show message
+          setIsLoginView(false); // Switch to register view to prompt re-registration
+          setMessage('Your account is not email verified. Please register again to receive a new OTP.');
+        }
+        setEmail('');
+        setPassword('');
       } else {
-        console.error('Failed to fetch users:', data.message);
+        setMessage(data.message || 'Login failed. Please try again.');
       }
     } catch (error) {
-      console.error('Error fetching users:', error);
+      console.error('Error during login:', error);
+      setMessage('Server error during login. Please try again later.');
     }
   };
 
+  /**
+   * Handles the registration form submission.
+   */
   const handleRegister = async (e) => {
     e.preventDefault();
     setMessage('');
+
+    if (!name || !email || !password || !confirmPassword) {
+      setMessage('Please fill in all fields.');
+      return;
+    }
+
     if (password !== confirmPassword) {
       setMessage('Passwords do not match.');
       return;
     }
+
     try {
-      const response = await fetch(`${API_BASE_URL}/auth/register`, {
+      const response = await fetch(`${API_BASE_URL}/register`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, email, password }),
+        body: JSON.stringify({ name, email, password })
       });
       const data = await response.json();
+
       if (response.ok) {
-        setOtpSent(true);
         setTempNewUserEmail(email);
-        setTempNewUserId(data.userId);
-        setMessage(data.message);
+        setTempNewUserId(data.userId); // Store the generated tempUserId from backend
+        setOtpSent(true);
+        setMessage(data.message); // Display message from backend
+        setCurrentView('otpVerification');
+        setName('');
+        setEmail('');
+        setPassword('');
+        setConfirmPassword('');
       } else {
-        setMessage(data.message || 'Registration failed.');
+        setMessage(data.message || 'Registration failed. Please try again.');
       }
     } catch (error) {
-      console.error('Registration error:', error);
-      setMessage('Server error during registration.');
+      console.error('Error during registration:', error);
+      setMessage('Server error during registration. Please try again later.');
     }
   };
 
+  /**
+   * Handles OTP verification.
+   */
   const handleVerifyOtp = async (e) => {
     e.preventDefault();
     setMessage('');
+
+    if (!enteredOtp) {
+        setMessage('Please enter the OTP.');
+        return;
+    }
+
     try {
-      const response = await fetch(`${API_BASE_URL}/auth/verify-otp`, {
+      const response = await fetch(`${API_BASE_URL}/verify-otp`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: tempNewUserEmail, otp: enteredOtp, userId: tempNewUserId }),
+        body: JSON.stringify({
+          userId: tempNewUserId, // Send the tempUserId
+          enteredOtp: enteredOtp,
+        })
       });
       const data = await response.json();
+
       if (response.ok) {
-        setMessage(data.message);
+        // Update local users state with the newly email verified user
+        // This user is now in the DB, so we can fetch all users again or add it
+        fetchInitialData(); // Re-fetch all users to ensure the new user is in state
+
+        setLoggedInUserId(data.user.id);
+        setLoggedInUserName(data.user.name);
+        setIsAdmin(data.user.isAdmin);
+
+        // After OTP verification, if not admin, go to pending approval
+        if (data.user.isAdmin || data.user.isApproved) { // Admin is auto-approved, or if already approved
+            setMessage('Account verified and created successfully! You are now logged in.');
+            setCurrentView('chat');
+        } else { // User is email verified but still needs admin approval
+            setMessage('Account email verified! Awaiting admin approval.');
+            setCurrentView('pendingApproval');
+        }
+
         setOtpSent(false);
+        setEnteredOtp('');
         setTempNewUserEmail('');
         setTempNewUserId('');
-        setEnteredOtp('');
-        setIsLoginView(true); // Go back to login view after successful verification
       } else {
-        setMessage(data.message || 'OTP verification failed.');
+        setMessage(data.message || 'OTP verification failed. Please try again.');
       }
     } catch (error) {
-      console.error('OTP verification error:', error);
-      setMessage('Server error during OTP verification.');
+      console.error('Error verifying OTP:', error);
+      setMessage('Server error during OTP verification. Please try again later.');
     }
   };
 
-  const handleLogin = async (e) => {
-    e.preventDefault();
-    setMessage('');
-    try {
-      const response = await fetch(`${API_BASE_URL}/auth/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password }),
-      });
-      const data = await response.json();
-      if (response.ok) {
-        localStorage.setItem('token', data.token);
-        setIsAuthenticated(true);
-        setLoggedInUserId(data.userId);
-        setLoggedInUserName(data.name);
-        setIsAdmin(data.isAdmin);
-        setIsChatEnabled(data.isChatEnabled);
-        setIsVivaQuestionsAddEnabled(data.isVivaQuestionsAddEnabled);
-        await fetchAllUsers(data.token);
-        setMessage('Login successful!');
-      } else {
-        setMessage(data.message || 'Login failed.');
-      }
-    } catch (error) {
-      console.error('Login error:', error);
-      setMessage('Server error during login.');
-    }
+  /**
+   * Handles removing a member from the group.
+   */
+  const handleRemoveMember = (memberIdToRemove) => {
+    setAllUsers(prevUsers => prevUsers.filter(u => u.id !== memberIdToRemove));
   };
 
+  /**
+   * Handles approving a member.
+   */
+  const handleApproveMember = (memberIdToApprove) => {
+    setAllUsers(prevUsers => prevUsers.map(u => u.id === memberIdToApprove ? { ...u, isApproved: true } : u));
+  };
+
+  /**
+   * Toggles the chat enabled/disabled status.
+   */
+  const handleToggleChat = () => {
+    setIsChatEnabled((prevStatus) => !prevStatus);
+  };
+
+  /**
+   * Toggles the viva questions add enabled/disabled status.
+   */
+  const handleToggleVivaQuestionsAdd = () => {
+    setIsVivaQuestionsAddEnabled((prevStatus) => !prevStatus);
+  };
+
+  /**
+   * Toggles dark mode.
+   */
+  const toggleDarkMode = () => {
+    setIsDarkMode((prevMode) => !prevMode);
+  };
+
+  /**
+   * Handles logging out the current user.
+   */
   const handleLogout = () => {
-    localStorage.removeItem('token');
-    setIsAuthenticated(false);
     setLoggedInUserId(null);
     setLoggedInUserName('');
     setIsAdmin(false);
-    setAllUsers([]);
     setCurrentView('auth');
-    setMessage('Logged out successfully.');
-    // Disconnect socket on logout
-    if (socketRef.current) {
-      socketRef.current.disconnect();
-      socketRef.current = null; // Clear the ref so it can be re-initialized on next login
-    }
+    setIsLoginView(true);
+    setMessage('You have been logged out.');
+    setOtpSent(false);
+    setEnteredOtp('');
+    setTempNewUserEmail('');
+    setTempNewUserId('');
   };
 
-  const handleApproveMember = (userId) => {
-    setAllUsers(prevUsers =>
-      prevUsers.map(user =>
-        user.id === userId ? { ...user, isApproved: true } : user
-      )
-    );
-  };
-
-  const handleRemoveMember = (userId) => {
-    setAllUsers(prevUsers => prevUsers.filter(user => user.id !== userId));
-  };
-
-  const handleToggleChat = () => {
-    setIsChatEnabled(prev => !prev);
-  };
-
-  const handleToggleVivaQuestionsAdd = () => {
-    setIsVivaQuestionsAddEnabled(prev => !prev);
-  };
-
-  const toggleDarkMode = () => {
-    setIsDarkMode(prevMode => !prevMode);
-  };
-
-  if (loading) {
+  // Conditional rendering based on currentView state
+  if (currentView === 'chat') {
+    const approvedGroupMembers = allUsers.filter(u => u.isApproved);
     return (
-      <div className={`min-h-screen flex items-center justify-center ${isDarkMode ? 'bg-gray-900' : 'bg-gray-100'}`}>
-        <div className="text-xl font-semibold text-indigo-600">Loading...</div>
+      <GroupChat
+        loggedInUserId={loggedInUserId}
+        userName={loggedInUserName}
+        isAdmin={isAdmin}
+        onGoToAdminDashboard={() => setCurrentView('admin')}
+        groupMembers={approvedGroupMembers}
+        isChatEnabled={isChatEnabled} // Pass the state to GroupChat
+        onLogout={handleLogout}
+        onGoToVivaQuestions={() => setCurrentView('vivaQuestions')}
+        isDarkMode={isDarkMode}
+        adminUserName={adminUserName}
+        // isSocketConnected={isSocketConnected} // Removed prop
+      />
+    );
+  } else if (currentView === 'admin') {
+    return (
+      <AdminDashboard
+        loggedInUserId={loggedInUserId}
+        userName={loggedInUserName}
+        allUsers={allUsers}
+        onRemoveMember={handleRemoveMember}
+        onApproveMember={handleApproveMember}
+        onGoToChat={() => setCurrentView('chat')}
+        isChatEnabled={isChatEnabled}
+        onToggleChat={handleToggleChat}
+        isVivaQuestionsAddEnabled={isVivaQuestionsAddEnabled}
+        onToggleVivaQuestionsAdd={handleToggleVivaQuestionsAdd}
+        onLogout={handleLogout}
+        isDarkMode={isDarkMode}
+        adminUserName={adminUserName}
+      />
+    );
+  } else if (currentView === 'vivaQuestions') {
+    return (
+      <VivaQuestionsPage
+        loggedInUserId={loggedInUserId}
+        userName={loggedInUserName}
+        isAdmin={isAdmin}
+        onGoToChat={() => setCurrentView('chat')}
+        isVivaQuestionsAddEnabled={isVivaQuestionsAddEnabled} // Pass the state to VivaQuestionsPage
+        isDarkMode={isDarkMode}
+        adminUserName={adminUserName}
+        // isSocketConnected={isSocketConnected} // Removed prop
+      />
+    );
+  } else if (currentView === 'otpVerification') {
+    return (
+      <div className={`min-h-screen flex items-center justify-center p-4 font-sans
+        ${isDarkMode ? 'bg-gradient-to-br from-gray-900 to-blue-950' : 'bg-gradient-to-br from-sky-50 to-blue-100'}`}>
+        {/* Dark Mode Toggle - always visible */}
+        <div className="absolute top-4 right-4 z-10">
+          <DarkModeToggle isDarkMode={isDarkMode} toggleDarkMode={toggleDarkMode} />
+        </div>
+        <div className={`p-8 rounded-xl shadow-lg w-full max-w-md text-center transform transition-all duration-300 hover:scale-105
+          ${isDarkMode ? 'bg-gray-800 text-gray-100' : 'bg-white'}`}>
+          <h2 className={`text-3xl font-extrabold mb-4 ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>Verify Your Account</h2>
+          {message && (
+            <div className={`mb-4 p-3 text-sm text-center text-white rounded-lg shadow-md ${message.includes('successful') ? 'bg-green-500' : message.includes('Invalid') || message.includes('expired') ? 'bg-red-500' : 'bg-blue-500'}`}>
+              {message}
+            </div>
+          )}
+          <p className={`text-lg mb-6 ${isDarkMode ? 'text-gray-300' : 'text-gray-700'}`}>
+            An OTP has been sent to <span className="font-semibold">{tempNewUserEmail}</span>. Please enter it below.
+          </p>
+          <form onSubmit={handleVerifyOtp} className="space-y-6">
+            <div>
+              <label htmlFor="otp" className={`block text-sm font-medium mb-1 ${isDarkMode ? 'text-gray-300' : 'text-gray-700'}`}>
+                Enter OTP
+              </label>
+              <input
+                id="otp"
+                name="otp"
+                type="text"
+                maxLength="6"
+                required
+                className={`appearance-none relative block w-full px-3 py-2 border rounded-md shadow-sm placeholder-gray-400 focus:outline-none sm:text-sm
+                  ${isDarkMode ? 'bg-gray-700 border-gray-600 text-gray-100 focus:ring-blue-500 focus:border-blue-500' : 'border-gray-300 focus:ring-blue-400 focus:border-blue-400'}`}
+                placeholder="6-digit OTP"
+                value={enteredOtp}
+                onChange={(e) => setEnteredOtp(e.target.value)}
+              />
+            </div>
+            <div>
+              <button
+                type="submit"
+                className={`group relative w-full flex justify-center py-2 px-4 border border-transparent text-sm font-medium rounded-md text-white shadow-md transition duration-300 ease-in-out transform hover:scale-105
+                  ${isDarkMode ? 'bg-blue-700 hover:bg-blue-800 focus:ring-blue-600' : 'bg-blue-500 hover:bg-blue-600 focus:ring-blue-400'}`}
+              >
+                Verify OTP
+              </button>
+            </div>
+          </form>
+          <button
+            onClick={handleLogout}
+            className={`mt-4 text-sm font-medium focus:outline-none focus:underline ${isDarkMode ? 'text-blue-400 hover:text-blue-300' : 'text-blue-500 hover:text-blue-600'}`}
+          >
+            Go back to Login
+          </button>
+        </div>
+      </div>
+    );
+  }
+  else if (currentView === 'pendingApproval') {
+    return (
+      <div className={`min-h-screen flex items-center justify-center p-4 font-sans
+        ${isDarkMode ? 'bg-gradient-to-br from-gray-800 to-gray-900' : 'bg-gradient-to-br from-yellow-100 to-orange-200'}`}>
+        <div className={`p-8 rounded-xl shadow-lg w-full max-w-md text-center
+          ${isDarkMode ? 'bg-gray-700 text-gray-100' : 'bg-white'}`}>
+          <h2 className={`text-3xl font-extrabold mb-4 ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>Awaiting Approval</h2>
+          <p className={`text-lg mb-6 ${isDarkMode ? 'text-gray-300' : 'text-gray-700'}`}>
+            Hello, <span className={`font-semibold ${isDarkMode ? 'text-blue-400' : 'text-blue-500'}`}>{loggedInUserName}</span>!
+            Your account is currently awaiting approval from an administrator.
+          </p>
+          <p className={`text-md ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>
+            You will be able to join the chat once your request has been approved.
+          </p>
+          <button
+            onClick={handleLogout}
+            className={`mt-8 font-bold py-2 px-4 rounded-xl shadow-md transition duration-300 ease-in-out transform hover:scale-105
+              ${isDarkMode ? 'bg-blue-700 hover:bg-blue-800 text-white' : 'bg-blue-500 hover:bg-blue-600 text-white'}`}
+          >
+            Go Back to Login
+          </button>
+        </div>
       </div>
     );
   }
 
+  // Default view: Auth forms
   return (
-    <Router>
-      <div className={`min-h-screen flex flex-col ${isDarkMode ? 'bg-gray-900 text-gray-100' : 'bg-gray-100 text-gray-900'}`}>
-        <div className="absolute top-4 right-4 z-10">
-          <DarkModeToggle isDarkMode={isDarkMode} toggleDarkMode={toggleDarkMode} />
-        </div>
-        <Routes>
-          <Route
-            path="/"
-            element={
-              isAuthenticated ? (
-                <Navigate to="/chat" />
-              ) : (
-                <div className={`min-h-screen flex items-center justify-center py-12 px-4 sm:px-6 lg:px-8 ${isDarkMode ? 'bg-gray-900' : 'bg-gray-50'}`}>
-                  <div className={`max-w-md w-full space-y-8 p-10 rounded-xl shadow-lg ${isDarkMode ? 'bg-gray-800' : 'bg-white'}`}>
-                    <div>
-                      <h2 className={`mt-6 text-center text-3xl font-extrabold ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>
-                        {isLoginView ? 'Sign in to your account' : 'Register for an account'}
-                      </h2>
-                      {message && (
-                        <p className={`mt-2 text-center text-sm ${message.includes('successful') || message.includes('sent') ? 'text-green-500' : 'text-red-500'}`}>
-                          {message}
-                        </p>
-                      )}
-                    </div>
-                    {otpSent ? (
-                      <form onSubmit={handleVerifyOtp} className="space-y-6">
-                        <div>
-                          <label htmlFor="otp" className={`block text-sm font-medium mb-1 ${isDarkMode ? 'text-gray-300' : 'text-gray-700'}`}>
-                            Enter OTP sent to {tempNewUserEmail}
-                          </label>
-                          <input
-                            id="otp"
-                            name="otp"
-                            type="text"
-                            required
-                            className={`appearance-none relative block w-full px-3 py-2 border rounded-md shadow-sm placeholder-gray-400 focus:outline-none sm:text-sm
-                              ${isDarkMode ? 'bg-gray-700 border-gray-600 text-gray-100 focus:ring-blue-500 focus:border-blue-500' : 'border-gray-300 focus:ring-blue-400 focus:border-blue-400'}`}
-                            placeholder="OTP"
-                            value={enteredOtp}
-                            onChange={(e) => setEnteredOtp(e.target.value)}
-                          />
-                        </div>
-                        <div>
-                          <button
-                            type="submit"
-                            className={`group relative w-full flex justify-center py-2 px-4 border border-transparent text-sm font-medium rounded-md text-white shadow-md transition duration-300 ease-in-out transform hover:scale-105
-                              ${isDarkMode ? 'bg-blue-700 hover:bg-blue-800 focus:ring-blue-600' : 'bg-blue-500 hover:bg-blue-600 focus:ring-blue-400'}`}
-                          >
-                            Verify OTP
-                          </button>
-                        </div>
-                      </form>
-                    ) : (
-                      <>
-                        {isLoginView ? (
-                          <Login
-                            email={email}
-                            setEmail={setEmail}
-                            password={password}
-                            setPassword={setPassword}
-                            handleLogin={handleLogin}
-                            message={message}
-                            isDarkMode={isDarkMode}
-                            setIsLoginView={setIsLoginView}
-                          />
-                        ) : (
-                          <Register
-                            name={name}
-                            setName={setName}
-                            email={email}
-                            setEmail={setEmail}
-                            password={password}
-                            setPassword={setPassword}
-                            confirmPassword={confirmPassword}
-                            setConfirmPassword={setConfirmPassword}
-                            handleRegister={handleRegister}
-                            message={message}
-                            isDarkMode={isDarkMode}
-                            setIsLoginView={setIsLoginView}
-                          />
-                        )}
-                        <div className="text-center mt-4">
-                          <button
-                            onClick={() => setIsLoginView(!isLoginView)}
-                            className={`font-medium ${isDarkMode ? 'text-blue-400 hover:text-blue-300' : 'text-blue-600 hover:text-blue-500'}`}
-                          >
-                            {isLoginView ? 'Need an account? Register' : 'Already have an account? Sign In'}
-                          </button>
-                        </div>
-                      </>
-                    )}
-                  </div>
-                </div>
-              )
-            }
-          />
-          <Route
-            path="/chat"
-            element={
-              isAuthenticated ? (
-                <Chat
-                  loggedInUserId={loggedInUserId}
-                  userName={loggedInUserName}
-                  isAdmin={isAdmin}
-                  onGoToAdminDashboard={() => setCurrentView('admin')}
-                  groupMembers={allUsers}
-                  isChatEnabled={isChatEnabled}
-                  onLogout={handleLogout}
-                  onGoToVivaQuestions={() => setCurrentView('viva-questions')}
-                  isDarkMode={isDarkMode}
-                  adminUserName={adminUserName}
-                  socket={socketRef.current} // Pass the socket instance
-                />
-              ) : (
-                <Navigate to="/" />
-              )
-            }
-          />
-          <Route
-            path="/admin"
-            element={
-              isAuthenticated && isAdmin ? (
-                <AdminDashboard
-                  loggedInUserId={loggedInUserId}
-                  userName={loggedInUserName}
-                  allUsers={allUsers}
-                  onRemoveMember={handleRemoveMember}
-                  onApproveMember={handleApproveMember}
-                  onGoToChat={() => setCurrentView('chat')}
-                  isChatEnabled={isChatEnabled}
-                  onToggleChat={handleToggleChat}
-                  isVivaQuestionsAddEnabled={isVivaQuestionsAddEnabled}
-                  onToggleVivaQuestionsAdd={handleToggleVivaQuestionsAdd}
-                  onLogout={handleLogout}
-                  isDarkMode={isDarkMode}
-                  adminUserName={adminUserName}
-                />
-              ) : (
-                <Navigate to="/" />
-              )
-            }
-          />
-          <Route
-            path="/viva-questions"
-            element={
-              isAuthenticated ? (
-                <VivaQuestionsPage
-                  loggedInUserId={loggedInUserId}
-                  userName={loggedInUserName}
-                  isAdmin={isAdmin}
-                  onGoToChat={() => setCurrentView('chat')}
-                  isVivaQuestionsAddEnabled={isVivaQuestionsAddEnabled}
-                  isDarkMode={isDarkMode}
-                  adminUserName={adminUserName}
-                />
-              ) : (
-                <Navigate to="/" />
-              )
-            }
-          />
-        </Routes>
+    <div className={`min-h-screen flex items-center justify-center p-4 font-sans
+      ${isDarkMode ? 'bg-gradient-to-br from-gray-900 to-blue-950' : 'bg-gradient-to-br from-sky-50 to-blue-100'}`}>
+      {/* Dark Mode Toggle - always visible */}
+      <div className="absolute top-4 right-4 z-10">
+        <DarkModeToggle isDarkMode={isDarkMode} toggleDarkMode={toggleDarkMode} />
       </div>
-    </Router>
+
+      <div className={`p-8 rounded-xl shadow-lg w-full max-w-md transform transition-all duration-300 hover:scale-105
+        ${isDarkMode ? 'bg-gray-800 text-gray-100' : 'bg-white'}`}>
+        <h2 className={`text-3xl font-extrabold mb-6 text-center ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>
+          {isLoginView ? 'Welcome Back!' : 'Join Our Community'}
+        </h2>
+
+        {message && (
+          <div className={`mb-4 p-3 text-sm text-center text-white rounded-lg shadow-md ${message.includes('successful') ? 'bg-green-500' : 'bg-blue-500'}`}>
+            {message}
+          </div>
+        )}
+
+        <form onSubmit={isLoginView ? handleLogin : handleRegister} className="space-y-6">
+          {!isLoginView && (
+            <div>
+              <label htmlFor="name" className={`block text-sm font-medium mb-1 ${isDarkMode ? 'text-gray-300' : 'text-gray-700'}`}>
+                Name
+              </label>
+              <input
+                id="name"
+                name="name"
+                type="text"
+                autoComplete="name"
+                required
+                className={`appearance-none relative block w-full px-3 py-2 border rounded-md shadow-sm placeholder-gray-400 focus:outline-none sm:text-sm
+                  ${isDarkMode ? 'bg-gray-700 border-gray-600 text-gray-100 focus:ring-blue-500 focus:border-blue-500' : 'border-gray-300 focus:ring-blue-400 focus:border-blue-400'}`}
+                placeholder="Your Name"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+              />
+            </div>
+          )}
+          <div>
+            <label htmlFor="email-address" className={`block text-sm font-medium mb-1 ${isDarkMode ? 'text-gray-300' : 'text-gray-700'}`}>
+              Email address
+            </label>
+            <input
+                id="email-address"
+                name="email"
+                type="email"
+                autoComplete="email"
+                required
+                className={`appearance-none relative block w-full px-3 py-2 border rounded-md shadow-sm placeholder-gray-400 focus:outline-none sm:text-sm
+                ${isDarkMode ? 'bg-gray-700 border-gray-600 text-gray-100 focus:ring-blue-500 focus:border-blue-500' : 'border-gray-300 focus:ring-blue-400 focus:border-blue-400'}`}
+                placeholder="Email address"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+            />
+          </div>
+          <div>
+            <label htmlFor="password" className={`block text-sm font-medium mb-1 ${isDarkMode ? 'text-gray-300' : 'text-gray-700'}`}>
+              Password
+            </label>
+            <input
+                id="password"
+                name="password"
+                type="password"
+                autoComplete={isLoginView ? 'current-password' : 'new-password'}
+                required
+                className={`appearance-none relative block w-full px-3 py-2 border rounded-md shadow-sm placeholder-gray-400 focus:outline-none sm:text-sm
+                ${isDarkMode ? 'bg-gray-700 border-gray-600 text-gray-100 focus:ring-blue-500 focus:border-blue-500' : 'border-gray-300 focus:ring-blue-400 focus:border-blue-400'}`}
+                placeholder="Password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+            />
+          </div>
+          {!isLoginView && (
+            <div>
+              <label htmlFor="confirm-password" className={`block text-sm font-medium mb-1 ${isDarkMode ? 'text-gray-300' : 'text-gray-700'}`}>
+                Confirm Password
+              </label>
+              <input
+                id="confirm-password"
+                name="confirm-password"
+                type="password"
+                autoComplete="new-password"
+                required
+                className={`appearance-none relative block w-full px-3 py-2 border rounded-md shadow-sm placeholder-gray-400 focus:outline-none sm:text-sm
+                  ${isDarkMode ? 'bg-gray-700 border-gray-600 text-gray-100 focus:ring-blue-500 focus:border-blue-500' : 'border-gray-300 focus:ring-blue-400 focus:border-blue-400'}`}
+                placeholder="Confirm Password"
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+              />
+            </div>
+          )}
+
+          <div>
+            <button
+              type="submit"
+              className={`group relative w-full flex justify-center py-2 px-4 border border-transparent text-sm font-medium rounded-md text-white shadow-md transition duration-300 ease-in-out transform hover:scale-105
+                ${isDarkMode ? 'bg-blue-700 hover:bg-blue-800 focus:ring-blue-600' : 'bg-blue-500 hover:bg-blue-600 focus:ring-blue-400'}`}
+            >
+              {isLoginView ? 'Sign In' : 'Register'}
+            </button>
+          </div>
+        </form>
+
+        <div className="mt-6 text-center">
+          <p className={`text-sm ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>
+            {isLoginView ? "Don't have an account?" : "Already have an account?"}{' '}
+            <button
+              onClick={() => {
+                setIsLoginView(!isLoginView);
+                setMessage('');
+                setName('');
+                setEmail('');
+                setPassword('');
+                setConfirmPassword('');
+              }}
+              className={`font-medium focus:outline-none focus:underline ${isDarkMode ? 'text-blue-400 hover:text-blue-300' : 'text-blue-500 hover:text-blue-600'}`}
+            >
+              {isLoginView ? 'Register here' : 'Login here'}
+            </button>
+          </p>
+        </div>
+      </div>
+    </div>
   );
 }
 
