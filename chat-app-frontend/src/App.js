@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import io from 'socket.io-client';
 
 // Backend URL
-const API_BASE_URL = 'https://chat-backend-api-rhu4.onrender.com'; // Ensure this matches your backend port
+const API_BASE_URL = 'https://chat-backend-api-rhu4.onrender.com/api''; // Ensure this matches your backend port
 //const SOCKET_URL = 'http://localhost:3001';
 const BACKEND_URL = 'https://chat-backend-api-rhu4.onrender.com';
 const socket = io(BACKEND_URL);
