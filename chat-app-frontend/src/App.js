@@ -4,8 +4,12 @@ import io from 'socket.io-client';
 // Backend URL
 const API_BASE_URL = 'https://chat-backend-api-rhu4.onrender.com'; // Ensure this matches your backend port
 //const SOCKET_URL = 'http://localhost:3001';
+// Your backend's live URL from Render
 const BACKEND_URL = 'https://chat-backend-api-rhu4.onrender.com';
-const socket = io(const BACKEND_URL);
+
+// Initialize Socket.IO connection outside the component if it needs to be global
+// Or inside a useEffect hook if it needs to be tied to component lifecycle
+const socket = io(BACKEND_URL);
 
 // Add some basic error logging for the socket connection (optional, but helpful)
 socket.on('connect_error', (err) => {
