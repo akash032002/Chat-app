@@ -15,7 +15,7 @@ const app = express();
 const server = http.createServer(app);
 const io = new Server(server, {
     cors: {
-        origin: "process.env.CORS_ORIGIN", // Allow all origins for development. In production, specify your frontend URL.
+        origin: process.env.CORS_ORIGIN, // Allow all origins for development. In production, specify your frontend URL.
         methods: ["GET", "POST"]
     }
 });
